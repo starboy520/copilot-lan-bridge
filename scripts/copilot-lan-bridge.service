@@ -1,0 +1,13 @@
+[Unit]
+Description=Copilot LAN Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/bash %h/copilot-lan-bridge/scripts/run-wsl.sh
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

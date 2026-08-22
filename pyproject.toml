@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copilot-lan-bridge"
+version = "0.1.0"
+description = "Cross-platform LAN bridge from the OpenAI Responses API to GitHub Copilot"
+readme = "README.zh-CN.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+  { name = "starboy520" },
+]
+dependencies = [
+  "aiohttp>=3.11,<4",
+]
+
+[project.urls]
+Repository = "https://github.com/starboy520/copilot-lan-bridge"
+Issues = "https://github.com/starboy520/copilot-lan-bridge/issues"
+
+[project.scripts]
+copilot-lan-bridge = "copilot_lan_bridge.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copilot_lan_bridge"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
