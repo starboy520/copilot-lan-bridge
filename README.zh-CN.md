@@ -47,13 +47,28 @@ bash ~/copilot-lan-bridge/scripts/run-wsl.sh
 COPILOT_BRIDGE_HOST=127.0.0.1 bash ~/copilot-lan-bridge/scripts/run-wsl.sh
 ```
 
-作为 systemd 服务运行：
+### Ubuntu 开机启动与异常拉起
+
+安装为 systemd 用户服务：
 
 ```bash
-mkdir -p ~/.config/systemd/user
-cp ~/copilot-lan-bridge/scripts/copilot-lan-bridge.service ~/.config/systemd/user/
-systemctl --user daemon-reload
-systemctl --user enable --now copilot-lan-bridge
+bash ~/copilot-lan-bridge/scripts/install-linux-service.sh
+```
+
+脚本会立即启动服务并启用开机启动。unit 使用 `Restart=on-failure`，进程异常退出后等待 3 秒自动拉起。
+
+要保证服务器重启后即使无人登录也能启动，需要启用 systemd linger；如果安装脚本无法自动启用，请执行一次：
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+验证：
+
+```bash
+systemctl --user is-enabled copilot-lan-bridge
+systemctl --user is-active copilot-lan-bridge
+loginctl show-user "$USER" -p Linger
 ```
 
 WSL2 NAT 模式还需要在管理员 PowerShell 中执行：
@@ -84,9 +99,15 @@ py -3.11 -m venv .venv
 $configDir = Join-Path $HOME ".config\copilot-lan-bridge"
 New-Item -ItemType Directory -Force $configDir | Out-Null
 $keyBytes = New-Object byte[] 32
-[Security.Cryptography.RandomNumberGenerator]::Fill($keyBytes)
-$bridgeKey = [Convert]::ToHexString($keyBytes).ToLower()
-Set-Content -NoNewline -Encoding ascii (Join-Path $configDir "api-key") $bridgeKey
+$random = [Security.Cryptography.RandomNumberGenerator]::Create()
+try {
+	$random.GetBytes($keyBytes)
+}
+finally {
+	$random.Dispose()
+}
+$bridgeKey = [BitConverter]::ToString($keyBytes).Replace("-", "").ToLowerInvariant()
+[IO.File]::WriteAllText((Join-Path $configDir "api-key"), $bridgeKey, [Text.Encoding]::ASCII)
 ```
 
 启动服务：
@@ -98,6 +119,36 @@ $env:COPILOT_BRIDGE_API_KEY = Get-Content -Raw "$HOME\.config\copilot-lan-bridge
 # 自动检测失败时再设置：
 # $env:OPENCODE_AUTH_FILE = "$HOME\.local\share\opencode\auth.json"
 & ".\.venv\Scripts\copilot-lan-bridge.exe"
+```
+
+### Windows 开机启动与异常拉起
+
+安装完成并准备好 OpenCode `auth.json` 后，在管理员 PowerShell 中执行：
+
+```powershell
+Set-Location "$HOME\copilot-lan-bridge"
+.\scripts\install-windows-startup.ps1
+```
+
+脚本会创建名为 `Copilot LAN Bridge` 的计划任务：
+
+- Windows 开机时自动启动，不要求用户先登录。
+- 桥接进程退出后等待 3 秒自动拉起。
+- 同一时间只允许一个任务实例。
+
+验证任务和接口：
+
+```powershell
+Get-ScheduledTask -TaskName "Copilot LAN Bridge"
+Get-ScheduledTaskInfo -TaskName "Copilot LAN Bridge"
+Invoke-RestMethod http://127.0.0.1:18787/health
+```
+
+停止或卸载：
+
+```powershell
+Stop-ScheduledTask -TaskName "Copilot LAN Bridge"
+Unregister-ScheduledTask -TaskName "Copilot LAN Bridge" -Confirm:$false
 ```
 
 Windows 防火墙只允许“专用网络”访问 TCP 18787。需要管理员 PowerShell：
