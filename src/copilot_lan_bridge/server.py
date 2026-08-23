@@ -169,7 +169,10 @@ async def create_response(request: web.Request) -> web.StreamResponse:
 
 
 def create_app(settings: Settings, gateway: CopilotGateway | None = None) -> web.Application:
-    app = web.Application(middlewares=[authorization_middleware])
+    app = web.Application(
+        middlewares=[authorization_middleware],
+        client_max_size=10 * 1024**2,
+    )
     selected_gateway = gateway or CopilotGateway(settings)
     app[SETTINGS_KEY] = settings
     app[GATEWAY_KEY] = selected_gateway

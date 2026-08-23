@@ -93,6 +93,15 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             b'event: response.output_text.delta\ndata: {"delta":"hello"}\n\n',
         )
 
+    async def test_responses_accept_payload_larger_than_aiohttp_default(self) -> None:
+        response = await self.client.post(
+            "/v1/responses",
+            headers=self.authorization(),
+            json={"model": "gpt-test", "input": "x" * (1024**2 + 1)},
+        )
+
+        self.assertEqual(response.status, 200)
+
 
 if __name__ == "__main__":
     unittest.main()
