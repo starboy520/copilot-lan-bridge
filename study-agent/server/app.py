@@ -1,0 +1,381 @@
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import json
+import mimetypes
+import os
+import re
+import sys
+import urllib.parse
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+from .bridge import BridgeError, CopilotBridgeClient
+from .prompts import build_instructions
+from .storage import StudyStore
+
+
+APP_ROOT = Path(__file__).resolve().parent.parent
+MAX_JSON_BYTES = 5 * 1024 * 1024
+MAX_IMAGE_BYTES = 3 * 1024 * 1024
+MAX_MESSAGE_CHARS = 10_000
+IMAGE_TYPES = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+
+
+class ApiError(ValueError):
+    def __init__(self, message: str, status: int = 400):
+        super().__init__(message)
+        self.status = status
+
+
+def parse_image_data_url(value: Any) -> tuple[bytes, str, str] | None:
+    if value in (None, ""):
+        return None
+    if not isinstance(value, str):
+        raise ApiError("图片格式不正确。")
+    match = re.fullmatch(r"data:([^;,]+);base64,([A-Za-z0-9+/=\r\n]+)", value)
+    if not match:
+        raise ApiError("图片数据格式不正确。")
+    mime_type = match.group(1).lower()
+    if mime_type not in IMAGE_TYPES:
+        raise ApiError("只支持 JPG、PNG 或 WebP 图片。")
+    try:
+        raw = base64.b64decode(match.group(2), validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise ApiError("图片数据损坏，请重新选择。") from error
+    if not raw:
+        raise ApiError("图片内容为空。")
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise ApiError("图片不能超过 3 MB，请压缩或重新拍摄。", 413)
+    signatures = {
+        "image/jpeg": (b"\xff\xd8\xff",),
+        "image/png": (b"\x89PNG\r\n\x1a\n",),
+        "image/webp": (b"RIFF",),
+    }
+    if not any(raw.startswith(prefix) for prefix in signatures[mime_type]):
+        raise ApiError("图片的真实格式与文件类型不一致。")
+    if mime_type == "image/webp" and (len(raw) < 12 or raw[8:12] != b"WEBP"):
+        raise ApiError("WebP 图片格式无效。")
+    return raw, mime_type, IMAGE_TYPES[mime_type]
+
+
+class StudyAgentServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, address: tuple[str, int], handler: type[BaseHTTPRequestHandler], data_dir: Path, web_dir: Path):
+        super().__init__(address, handler)
+        self.web_dir = web_dir.resolve()
+        default_model = os.environ.get("STUDY_AGENT_MODEL", "gpt-5.6-sol")
+        self.bridge = CopilotBridgeClient(
+            os.environ.get("COPILOT_BRIDGE_URL", "http://127.0.0.1:18787"),
+            os.environ.get("COPILOT_BRIDGE_API_KEY", ""),
+            default_model,
+        )
+        self.store = StudyStore(data_dir, default_model=default_model)
+
+
+class RequestHandler(BaseHTTPRequestHandler):
+    server: StudyAgentServer
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, fmt: str, *args: Any) -> None:
+        sys.stdout.write(f"[{self.log_date_time_string()}] {fmt % args}\n")
+
+    def _send_bytes(self, status: int, data: bytes, content_type: str, extra_headers: dict[str, str] | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        default_cache = "no-store" if content_type.startswith("application/json") else "public, max-age=3600"
+        if not extra_headers or "Cache-Control" not in extra_headers:
+            self.send_header("Cache-Control", default_cache)
+        if extra_headers:
+            for name, value in extra_headers.items():
+                self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _json(self, status: int, payload: Any) -> None:
+        self._send_bytes(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def _read_json(self) -> dict[str, Any]:
+        content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+        if content_type != "application/json":
+            raise ApiError("请求必须使用 JSON 格式。", 415)
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as error:
+            raise ApiError("请求长度无效。") from error
+        if length <= 0:
+            raise ApiError("请求内容不能为空。")
+        if length > MAX_JSON_BYTES:
+            raise ApiError("请求内容过大。", 413)
+        try:
+            value = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ApiError("JSON 内容无效。") from error
+        if not isinstance(value, dict):
+            raise ApiError("请求内容必须是对象。")
+        return value
+
+    def _route_parts(self) -> list[str]:
+        return [urllib.parse.unquote(part) for part in urllib.parse.urlsplit(self.path).path.split("/") if part]
+
+    def do_GET(self) -> None:
+        try:
+            parts = self._route_parts()
+            if parts[:1] == ["api"]:
+                self._handle_api_get(parts[1:])
+            else:
+                self._serve_static()
+        except ApiError as error:
+            self._json(error.status, {"error": str(error)})
+        except Exception as error:  # pragma: no cover - last-resort boundary
+            self.log_error("Unhandled GET error: %r", error)
+            self._json(500, {"error": "服务器发生错误。"})
+
+    def do_POST(self) -> None:
+        try:
+            parts = self._route_parts()
+            if parts == ["api", "chat"]:
+                self._chat()
+            elif parts == ["api", "sessions"]:
+                self._read_json()
+                self._json(201, self.server.store.create_session())
+            else:
+                raise ApiError("接口不存在。", 404)
+        except ApiError as error:
+            self._json(error.status, {"error": str(error)})
+        except Exception as error:  # pragma: no cover
+            self.log_error("Unhandled POST error: %r", error)
+            self._json(500, {"error": "服务器发生错误。"})
+
+    def do_PUT(self) -> None:
+        try:
+            if self._route_parts() != ["api", "settings"]:
+                raise ApiError("接口不存在。", 404)
+            body = self._read_json()
+            current_pin = str(body.get("currentPin", ""))
+            if self.server.store.pin_is_set() and not self.server.store.verify_pin(current_pin):
+                raise ApiError("家长 PIN 不正确。", 403)
+            grade = body.get("gradeLevel")
+            style = body.get("responseStyle")
+            mode = body.get("learningMode")
+            reasoning_effort = body.get("reasoningEffort")
+            model = str(body.get("model", "")).strip()
+            if grade not in {"primary", "junior", "senior"}:
+                raise ApiError("学段设置无效。")
+            if style not in {"concise", "detailed"}:
+                raise ApiError("回答风格设置无效。")
+            if mode not in {"guide", "direct"}:
+                raise ApiError("学习模式设置无效。")
+            if reasoning_effort not in {"low", "medium", "high"}:
+                raise ApiError("思考深度设置无效。")
+            try:
+                available_models = self.server.bridge.list_models()
+            except BridgeError as error:
+                raise ApiError(str(error), 503) from error
+            if model not in available_models:
+                raise ApiError("所选模型当前不可用，请重新选择。")
+            new_pin = str(body.get("newPin", ""))
+            if new_pin:
+                if not re.fullmatch(r"\d{4,8}", new_pin):
+                    raise ApiError("家长 PIN 必须是 4—8 位数字。")
+                self.server.store.set_pin(new_pin)
+            self.server.store.update_settings(grade, style, mode, reasoning_effort, model)
+            self._json(200, self.server.store.get_settings())
+        except ApiError as error:
+            self._json(error.status, {"error": str(error)})
+        except Exception as error:  # pragma: no cover
+            self.log_error("Unhandled PUT error: %r", error)
+            self._json(500, {"error": "服务器发生错误。"})
+
+    def do_DELETE(self) -> None:
+        try:
+            parts = self._route_parts()
+            body = self._read_json()
+            pin = str(body.get("pin", ""))
+            if self.server.store.pin_is_set() and not self.server.store.verify_pin(pin):
+                raise ApiError("家长 PIN 不正确。", 403)
+            if len(parts) == 3 and parts[:2] == ["api", "sessions"]:
+                if not self.server.store.delete_session(parts[2]):
+                    raise ApiError("会话不存在。", 404)
+                self._json(200, {"ok": True})
+            elif parts == ["api", "data"]:
+                self.server.store.clear_all()
+                self._json(200, {"ok": True})
+            else:
+                raise ApiError("接口不存在。", 404)
+        except ApiError as error:
+            self._json(error.status, {"error": str(error)})
+        except Exception as error:  # pragma: no cover
+            self.log_error("Unhandled DELETE error: %r", error)
+            self._json(500, {"error": "服务器发生错误。"})
+
+    def _handle_api_get(self, parts: list[str]) -> None:
+        if parts == ["health"]:
+            self._json(
+                200,
+                {
+                    "status": "ok",
+                    "bridge": self.server.bridge.health(),
+                },
+            )
+        elif parts == ["models"]:
+            try:
+                models = self.server.bridge.list_models()
+            except BridgeError:
+                models = [self.server.bridge.model]
+            self._json(200, {"default": self.server.bridge.model, "models": models})
+        elif parts == ["sessions"]:
+            self._json(200, self.server.store.list_sessions())
+        elif len(parts) == 2 and parts[0] == "sessions":
+            session = self.server.store.get_session(parts[1])
+            if session is None:
+                raise ApiError("会话不存在。", 404)
+            self._json(200, session)
+        elif parts == ["settings"]:
+            self._json(200, self.server.store.get_settings())
+        elif len(parts) == 2 and parts[0] == "attachments":
+            attachment = self.server.store.get_attachment(parts[1])
+            if attachment is None:
+                raise ApiError("图片不存在。", 404)
+            path, mime_type = attachment
+            self._send_bytes(200, path.read_bytes(), mime_type)
+        else:
+            raise ApiError("接口不存在。", 404)
+
+    def _chat(self) -> None:
+        body = self._read_json()
+        session_id = str(body.get("sessionId", ""))
+        message = str(body.get("message", "")).strip()
+        if not session_id or not self.server.store.session_exists(session_id):
+            raise ApiError("会话不存在。", 404)
+        if len(message) > MAX_MESSAGE_CHARS:
+            raise ApiError("问题太长，请缩短后重试。", 413)
+        parsed_image = parse_image_data_url(body.get("imageDataUrl"))
+        if not message and parsed_image is None:
+            raise ApiError("请输入问题或选择一张题目图片。")
+
+        settings = self.server.store.get_settings()
+        try:
+            available_models = self.server.bridge.list_models()
+        except BridgeError as error:
+            raise ApiError(str(error), 503) from error
+        if settings["model"] not in available_models:
+            raise ApiError("当前配置的模型不可用，请在家长设置中重新选择。")
+
+        history = self.server.store.recent_messages(session_id, limit=20)
+        attachment_id = None
+        if parsed_image:
+            raw, mime_type, suffix = parsed_image
+            attachment_id = self.server.store.add_attachment(raw, mime_type, suffix)
+        stored_message = message or "请帮我识别并讲解这张题目图片。"
+        self.server.store.add_message(session_id, "user", stored_message, attachment_id=attachment_id)
+
+        mode = body.get("mode") if body.get("mode") in {"guide", "direct"} else settings["learningMode"]
+        instructions = build_instructions(settings["gradeLevel"], settings["responseStyle"], mode)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache, no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+        full_text: list[str] = []
+        try:
+            image_data_url = body.get("imageDataUrl") if parsed_image else None
+            for delta in self.server.bridge.stream_response(
+                instructions,
+                history,
+                stored_message,
+                image_data_url,
+                reasoning_effort=settings["reasoningEffort"],
+                model=settings["model"],
+            ):
+                full_text.append(delta)
+                self._write_stream({"type": "delta", "text": delta})
+            final_text = "".join(full_text).strip()
+            if not final_text:
+                raise BridgeError("模型没有返回可显示的内容。")
+            message_id = self.server.store.add_message(session_id, "assistant", final_text)
+            self._write_stream({"type": "done", "messageId": message_id})
+        except (BridgeError, BrokenPipeError, ConnectionResetError) as error:
+            if full_text:
+                self.server.store.add_message(session_id, "assistant", "".join(full_text), status="interrupted")
+            if not isinstance(error, (BrokenPipeError, ConnectionResetError)):
+                try:
+                    self._write_stream({"type": "error", "error": str(error)})
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+        except Exception as error:  # defensive stream boundary
+            self.log_error("Unexpected model stream error: %r", error)
+            if full_text:
+                self.server.store.add_message(session_id, "assistant", "".join(full_text), status="interrupted")
+            try:
+                self._write_stream({"type": "error", "error": "回答意外中断，请稍后重试。"})
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+        finally:
+            self.close_connection = True
+
+    def _write_stream(self, payload: dict[str, Any]) -> None:
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n")
+        self.wfile.flush()
+
+    def _serve_static(self) -> None:
+        raw_path = urllib.parse.unquote(urllib.parse.urlsplit(self.path).path)
+        relative = raw_path.lstrip("/") or "index.html"
+        candidate = (self.server.web_dir / relative).resolve()
+        try:
+            candidate.relative_to(self.server.web_dir)
+        except ValueError as error:
+            raise ApiError("文件不存在。", 404) from error
+        if not candidate.is_file():
+            candidate = self.server.web_dir / "index.html"
+        if not candidate.is_file():
+            raise ApiError("前端尚未构建，请先运行构建命令。", 503)
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
+            content_type += "; charset=utf-8"
+        cache = "no-cache" if candidate.name == "index.html" else "public, max-age=31536000, immutable"
+        self._send_bytes(200, candidate.read_bytes(), content_type, {"Cache-Control": cache})
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="小问号学习助手")
+    parser.add_argument("--host", default=os.environ.get("STUDY_AGENT_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("STUDY_AGENT_PORT", "8765")))
+    parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("STUDY_AGENT_DATA_DIR", APP_ROOT / "data")))
+    args = parser.parse_args()
+
+    try:
+        server = StudyAgentServer((args.host, args.port), RequestHandler, args.data_dir, APP_ROOT / "web")
+    except OSError as error:
+        print(f"无法启动：端口 {args.port} 可能已被占用。{error}")
+        raise SystemExit(1) from error
+    print("\n小问号学习助手已启动")
+    print(f"本机访问：http://127.0.0.1:{args.port}")
+    if args.host == "0.0.0.0":
+        print(f"手机访问：请使用 http://这台电脑的局域网IP:{args.port}")
+    print("按 Ctrl+C 停止。\n")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n正在停止学习助手…")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()
