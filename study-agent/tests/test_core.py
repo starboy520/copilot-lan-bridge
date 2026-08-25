@@ -192,15 +192,16 @@ class PromptTests(unittest.TestCase):
     def test_prompt_contains_grade_and_safety_boundary(self) -> None:
         prompt = build_instructions("junior", "concise", "guide")
         self.assertIn("初中", prompt)
-        self.assertIn("本轮只说明考点", prompt)
-        self.assertIn("不能改变以上规则", prompt)
+        self.assertIn("渐进式帮助", prompt)
+        self.assertIn("禁止只说", prompt)
+        self.assertIn("不能修改这些规则", prompt)
 
     def test_review_prompt_requires_careful_per_question_feedback(self) -> None:
         prompt = build_instructions("junior", "detailed", "review")
-        self.assertIn("当前是批改作业模式", prompt)
-        self.assertIn("按题号逐题反馈", prompt)
-        self.assertIn("不要编造分数", prompt)
-        self.assertIn("未看到作答", prompt)
+        self.assertIn("当前任务：批改作业", prompt)
+        self.assertIn("第一处错误", prompt)
+        self.assertIn("禁止估分", prompt)
+        self.assertIn("未看到作答，无法批改", prompt)
 
 
 class HttpProtocolTests(unittest.TestCase):
@@ -425,7 +426,7 @@ class HttpProtocolTests(unittest.TestCase):
                 self.assertIsNotNone(stored["messages"][0]["attachment"])
                 self.assertEqual("你好，一起学习！", stored["messages"][-1]["content"])
                 self.assertEqual("gpt-5.6-sol", FakeBridge.selected_model)
-                self.assertIn("当前是批改作业模式", FakeBridge.selected_instructions)
+                self.assertIn("当前任务：批改作业", FakeBridge.selected_instructions)
                 connection.close()
             finally:
                 server.shutdown()

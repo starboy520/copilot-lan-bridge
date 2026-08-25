@@ -9,7 +9,6 @@ import {
   Check,
   ChevronLeft,
   CircleStop,
-  Code2,
   ImagePlus,
   Lightbulb,
   LockKeyhole,
@@ -28,18 +27,27 @@ import {
 } from "lucide-react";
 import { takeNdjsonLines } from "./stream.js";
 
-const QUICK_ACTIONS = [
-  { label: "给我一点提示", icon: Lightbulb, prompt: "请先给我一个小提示，不要直接公布完整答案。" },
-  { label: "分步骤讲解", icon: BookOpen, prompt: "请把这道题分成容易理解的小步骤讲解。" },
-  { label: "检查我的答案", icon: Check, prompt: "我想检查自己的答案。请先问我做到了哪一步，再帮我找第一个错误。" },
-  { label: "再出一道类似题", icon: RotateCcw, prompt: "请根据刚才的知识点再出一道难度相近的题，暂时不要给答案。" },
+const LEARNING_ACTIONS = [
+  { label: "再提示一点", icon: Lightbulb, prompt: "请在刚才提示的基础上再给一个更具体的提示，但先不要公布最终答案。" },
+  { label: "分步骤讲解", icon: BookOpen, prompt: "请分步骤讲解这道题的完整关键过程，最后一步可以先留给我完成。" },
+  { label: "查看完整答案", icon: Check, prompt: "请给出这道题的完整过程、最终答案和一个简短的检查方法。" },
+  { label: "再练一道", icon: RotateCcw, prompt: "请围绕刚才的知识点出一道难度相近的题，暂时不要给答案，等我作答。" },
+];
+
+const REVIEW_ACTIONS = [
+  { label: "给订正提示", icon: Lightbulb, prompt: "请只针对第一道错题再给一个具体的订正提示，先不要给完整答案。" },
+  { label: "看完整订正", icon: BookOpen, prompt: "请给出这些错题的完整订正过程，并说明每题如何检查。" },
+  { label: "总结错因", icon: Check, prompt: "请把这次作业的主要错因归纳成不超过 3 点，并告诉我下次如何避免。" },
+  { label: "出一道巩固题", icon: RotateCcw, prompt: "请根据这次最主要的错因出一道巩固题，暂时不要给答案。" },
 ];
 
 const STARTERS = [
-  { icon: Lightbulb, title: "启发思考", text: "帮我理解质数，不要直接背定义" },
-  { icon: Camera, title: "拍照讲题", text: "拍下题目，我会先确认题意再讲解" },
-  { icon: Code2, title: "代码学习", text: "帮我看看这段 C++ 哪里写错了" },
+  { icon: Lightbulb, title: "问知识", text: "帮我理解质数，不要只背定义", mode: "guide" },
+  { icon: Camera, title: "拍题学习", text: "拍下题目，我会先确认题意，再从提示开始", mode: "guide" },
+  { icon: Check, title: "批改作业", text: "上传做好的作业，逐题检查并帮我订正", mode: "review" },
 ];
+
+const normalizeMode = (value) => value === "review" ? "review" : "guide";
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -216,8 +224,8 @@ function Welcome({ onStarter }) {
       <h1>今天想学点什么？</h1>
       <p>可以问知识、拍题目，也可以把不会的步骤告诉我。</p>
       <div className="starter-grid">
-        {STARTERS.map(({ icon: Icon, title, text }) => (
-          <button key={title} className="starter-card" onClick={() => onStarter(text)}>
+        {STARTERS.map(({ icon: Icon, title, text, mode }) => (
+          <button key={title} className="starter-card" onClick={() => onStarter({ text, mode })}>
             <Icon size={21} />
             <strong>{title}</strong>
             <span>{text}</span>
@@ -252,8 +260,9 @@ function ThinkingIndicator({ imageReview, progressText }) {
   );
 }
 
-function Message({ message, isLastAssistant, onQuickAction }) {
+function Message({ message, isLastAssistant, onQuickAction, mode }) {
   const isUser = message.role === "user";
+  const quickActions = mode === "review" ? REVIEW_ACTIONS : LEARNING_ACTIONS;
   return (
     <article className={`message ${isUser ? "message-user" : "message-assistant"}`}>
       {!isUser && <div className="assistant-avatar"><Sparkles size={16} /></div>}
@@ -272,7 +281,7 @@ function Message({ message, isLastAssistant, onQuickAction }) {
         </div>
         {!isUser && isLastAssistant && message.status === "completed" && (
           <div className="quick-actions">
-            {QUICK_ACTIONS.map(({ label, icon: Icon, prompt }) => (
+            {quickActions.map(({ label, icon: Icon, prompt }) => (
               <button key={label} onClick={() => onQuickAction(prompt)}><Icon size={15} />{label}</button>
             ))}
           </div>
@@ -345,11 +354,10 @@ function Composer({ value, setValue, image, setImage, mode, setMode, loading, on
             <button className="tool-button" onClick={() => galleryRef.current?.click()} disabled={loading} title="从相册或文件中选择图片" aria-label="从相册或文件中选择图片">
               <ImagePlus size={19} /><span>相册</span>
             </button>
-            <select value={mode} onChange={(event) => setMode(event.target.value)} disabled={loading} aria-label="学习模式">
-              <option value="guide">引导模式</option>
-              <option value="direct">直接讲解</option>
-              <option value="review">批改作业</option>
-            </select>
+            <div className="task-switch" role="group" aria-label="学习任务">
+              <button className={mode !== "review" ? "active" : ""} onClick={() => setMode("guide")} disabled={loading} type="button"><BookOpen size={16} />学习</button>
+              <button className={mode === "review" ? "active" : ""} onClick={() => setMode("review")} disabled={loading} type="button"><Check size={16} />批改作业</button>
+            </div>
           </div>
           {loading ? (
             <button className="send-button stop" onClick={onStop} title="停止生成"><CircleStop size={20} /></button>
@@ -430,7 +438,7 @@ function ProfileModal({ profiles, activeProfileId, onClose, onCreated, onRenamed
 }
 
 function SettingsModal({ profile, settings, models, onClose, onSaved, onClear }) {
-  const [form, setForm] = useState(settings);
+  const [form, setForm] = useState({ ...settings, learningMode: normalizeMode(settings.learningMode) });
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordSaved, setPasswordSaved] = useState(false);
@@ -483,7 +491,7 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
         <header><div><span className="eyebrow">{profile.name}的设置</span><h2 id="settings-title">调整学习方式</h2></div><button className="icon-button" onClick={onClose}><X size={20} /></button></header>
         <label>学段<select value={form.gradeLevel} onChange={(e) => setForm({ ...form, gradeLevel: e.target.value })}><option value="primary">小学</option><option value="junior">初中</option><option value="senior">高中</option></select></label>
         <label>回答风格<select value={form.responseStyle} onChange={(e) => setForm({ ...form, responseStyle: e.target.value })}><option value="concise">简洁</option><option value="detailed">详细</option></select></label>
-        <label>默认学习模式<select value={form.learningMode} onChange={(e) => setForm({ ...form, learningMode: e.target.value })}><option value="guide">先提示，再讲答案</option><option value="direct">直接分步骤讲解</option><option value="review">批改作业</option></select></label>
+        <div className="setting-note"><strong>默认学习方式</strong><span>先提示，再按孩子需要逐步讲解；批改作业可在输入框旁一键切换。</span></div>
         <label>思考深度<select value={form.reasoningEffort} onChange={(e) => setForm({ ...form, reasoningEffort: e.target.value })}><option value="low">快速</option><option value="medium">标准（推荐）</option><option value="high">深入</option></select></label>
         <label>回答模型<select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
         <section className="password-reset-section">
@@ -570,7 +578,7 @@ export default function App() {
         setActiveProfileId(selected.id);
         setSessions(sessionData);
         setSettings(settingData);
-        setMode(settingData.learningMode);
+        setMode(normalizeMode(settingData.learningMode));
         const availableModels = Array.isArray(modelData.models) ? modelData.models : [];
         setModels([...new Set([settingData.model, ...availableModels])]);
         setBridgeOnline(Boolean(health.bridge));
@@ -601,7 +609,7 @@ export default function App() {
     setActiveProfileId(profileId);
     setSessions(sessionData);
     setSettings(settingData);
-    setMode(settingData.learningMode);
+    setMode(normalizeMode(settingData.learningMode));
     setActiveId(null);
     setMessages([]);
     setText("");
@@ -778,11 +786,11 @@ export default function App() {
           {booting ? (
             <div className="loading-screen"><div className="loading-dot" /><p>正在准备学习空间…</p></div>
           ) : messages.length === 0 ? (
-            <Welcome onStarter={(starter) => setText(starter)} />
+            <Welcome onStarter={({ text: starterText, mode: starterMode }) => { setMode(starterMode); setText(starterText); }} />
           ) : (
             <div className="messages">
               {messages.map((message, index) => (
-                <Message key={message.id} message={message} isLastAssistant={index === lastAssistantIndex} onQuickAction={send} />
+                <Message key={message.id} message={message} isLastAssistant={index === lastAssistantIndex} onQuickAction={send} mode={mode} />
               ))}
               <div ref={bottomRef} />
             </div>
@@ -791,7 +799,7 @@ export default function App() {
         <Composer value={text} setValue={setText} image={image} setImage={setImage} mode={mode} setMode={setMode} loading={loading} onSend={() => send()} onStop={() => abortRef.current?.abort()} error={error} setError={setError} />
       </main>
       {showSettings && (
-        <SettingsModal profile={activeProfile} settings={settings} models={models} onClose={() => setShowSettings(false)} onSaved={(updated) => { setSettings(updated); setMode(updated.learningMode); setShowSettings(false); }} onClear={clearAll} />
+        <SettingsModal profile={activeProfile} settings={settings} models={models} onClose={() => setShowSettings(false)} onSaved={(updated) => { setSettings(updated); setMode(normalizeMode(updated.learningMode)); setShowSettings(false); }} onClear={clearAll} />
       )}
       {showProfiles && (
         <ProfileModal
