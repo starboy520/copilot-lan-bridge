@@ -153,9 +153,9 @@ function AccessScreen({ mode, onAuthenticated }) {
       <form className="access-card" onSubmit={submit}>
         <div className="access-mark"><LockKeyhole size={29} /></div>
         <span className="eyebrow">家庭学习空间</span>
-        <h1>{setup ? "设置家庭访问密码" : "欢迎回来"}</h1>
-        <p>{setup ? "首次使用时设置，全家设备使用同一个密码进入。" : "请输入家庭访问密码，进入孩子的学习空间。"}</p>
-        <label>家庭访问密码<input autoFocus type="password" autoComplete={setup ? "new-password" : "current-password"} minLength="8" maxLength="64" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8—64 个字符" /></label>
+        <h1>{setup ? "设置家庭密码" : "欢迎回来"}</h1>
+        <p>{setup ? "首次使用时设置，全家设备使用同一个密码进入。" : "请输入家庭密码，进入孩子的学习空间。"}</p>
+        <label>家庭密码<input autoFocus type="password" autoComplete={setup ? "new-password" : "current-password"} minLength="8" maxLength="64" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8—64 个字符" /></label>
         {setup && <label>再输入一次<input type="password" autoComplete="new-password" minLength="8" maxLength="64" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>}
         {error && <p className="access-error">{error}</p>}
         <button className="primary access-submit" disabled={submitting || password.length < 8 || (setup && confirmPassword.length < 8)} type="submit">{submitting ? "请稍候…" : setup ? "设置并进入" : "进入学习空间"}</button>
@@ -363,9 +363,8 @@ function Composer({ value, setValue, image, setImage, mode, setMode, loading, on
   );
 }
 
-function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, onRenamed, onDeleted }) {
+function ProfileModal({ profiles, activeProfileId, onClose, onCreated, onRenamed, onDeleted }) {
   const [name, setName] = useState("");
-  const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -373,7 +372,7 @@ function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, o
     setSaving(true);
     setError("");
     try {
-      const profile = await api("/api/profiles", { method: "POST", body: JSON.stringify({ name, pin }) });
+      const profile = await api("/api/profiles", { method: "POST", body: JSON.stringify({ name }) });
       setName("");
       await onCreated(profile);
     } catch (reason) {
@@ -388,7 +387,7 @@ function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, o
     if (!nextName || nextName === profile.name) return;
     setError("");
     try {
-      const updated = await api(`/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify({ name: nextName, pin }) });
+      const updated = await api(`/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify({ name: nextName }) });
       onRenamed(updated);
     } catch (reason) {
       setError(reason.message);
@@ -399,7 +398,7 @@ function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, o
     if (!window.confirm(`删除“${profile.name}”档案及其全部聊天和图片？此操作不能恢复。`)) return;
     setError("");
     try {
-      await api(`/api/profiles/${profile.id}`, { method: "DELETE", body: JSON.stringify({ pin }) });
+      await api(`/api/profiles/${profile.id}`, { method: "DELETE", body: "{}" });
       await onDeleted(profile.id);
     } catch (reason) {
       setError(reason.message);
@@ -422,9 +421,8 @@ function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, o
           ))}
         </div>
         <label>新增孩子<input value={name} maxLength="20" onChange={(event) => setName(event.target.value)} placeholder="名字或昵称" /></label>
-        {pinSet && <label>家长 PIN<input type="password" inputMode="numeric" value={pin} onChange={(event) => setPin(event.target.value)} placeholder="新增、修改或删除档案时需要" /></label>}
         {error && <p className="modal-error">{error}</p>}
-        <div className="privacy-note">每个孩子拥有独立的聊天记录和学习设置，家长 PIN 由全家共用。</div>
+        <div className="privacy-note">每个孩子拥有独立的聊天记录和学习设置，家庭密码统一保护整个学习空间。</div>
         <div className="modal-actions profile-actions"><button className="secondary" onClick={onClose}>完成</button><button className="primary" disabled={saving || !name.trim() || profiles.length >= 8} onClick={createProfile}>{saving ? "创建中…" : "新增档案"}</button></div>
       </section>
     </div>
@@ -433,11 +431,12 @@ function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, o
 
 function SettingsModal({ profile, settings, models, onClose, onSaved, onClear }) {
   const [form, setForm] = useState(settings);
-  const [currentPin, setCurrentPin] = useState("");
-  const [newPin, setNewPin] = useState("");
-  const [newAccessPassword, setNewAccessPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordSaved, setPasswordSaved] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resettingPassword, setResettingPassword] = useState(false);
 
   async function save() {
     setSaving(true);
@@ -445,13 +444,36 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
     try {
       const updated = await api("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ ...form, profileId: profile.id, currentPin, newPin, newAccessPassword }),
+        body: JSON.stringify({ ...form, profileId: profile.id }),
       });
       onSaved(updated);
     } catch (reason) {
       setError(reason.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function resetFamilyPassword() {
+    setError("");
+    setPasswordSaved(false);
+    if (newPassword !== confirmPassword) {
+      setError("两次输入的家庭密码不一致。");
+      return;
+    }
+    setResettingPassword(true);
+    try {
+      await api("/api/auth/password", {
+        method: "PUT",
+        body: JSON.stringify({ newPassword }),
+      });
+      setNewPassword("");
+      setConfirmPassword("");
+      setPasswordSaved(true);
+    } catch (reason) {
+      setError(reason.message);
+    } finally {
+      setResettingPassword(false);
     }
   }
 
@@ -464,13 +486,18 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
         <label>默认学习模式<select value={form.learningMode} onChange={(e) => setForm({ ...form, learningMode: e.target.value })}><option value="guide">先提示，再讲答案</option><option value="direct">直接分步骤讲解</option><option value="review">批改作业</option></select></label>
         <label>思考深度<select value={form.reasoningEffort} onChange={(e) => setForm({ ...form, reasoningEffort: e.target.value })}><option value="low">快速</option><option value="medium">标准（推荐）</option><option value="high">深入</option></select></label>
         <label>回答模型<select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
-        {settings.pinSet && <label>当前家长 PIN<input type="password" inputMode="numeric" value={currentPin} onChange={(e) => setCurrentPin(e.target.value)} placeholder="修改或删除数据时需要" /></label>}
-        <label>{settings.pinSet ? "设置新的 PIN（可不填）" : "设置家长 PIN（推荐）"}<input type="password" inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value)} placeholder="4—8 位数字" /></label>
-        <label>设置新的家庭访问密码（可选）<input type="password" autoComplete="new-password" minLength="8" maxLength="64" value={newAccessPassword} onChange={(e) => setNewAccessPassword(e.target.value)} placeholder="保存后其他设备需要重新登录" /></label>
+        <section className="password-reset-section">
+          <h3>重置家庭密码</h3>
+          <p>输入两次新密码即可重置。当前设备保持登录，其他设备需要使用新密码重新进入。</p>
+          <label>新的家庭密码<input type="password" autoComplete="new-password" minLength="8" maxLength="64" value={newPassword} onChange={(e) => { setNewPassword(e.target.value); setPasswordSaved(false); }} placeholder="8—64 个字符" /></label>
+          <label>再输入一次<input type="password" autoComplete="new-password" minLength="8" maxLength="64" value={confirmPassword} onChange={(e) => { setConfirmPassword(e.target.value); setPasswordSaved(false); }} /></label>
+          <button className="secondary password-reset-button" disabled={resettingPassword || newPassword.length < 8 || confirmPassword.length < 8} onClick={resetFamilyPassword}>{resettingPassword ? "正在重置…" : "重置家庭密码"}</button>
+          {passwordSaved && <p className="modal-success">家庭密码已重置。</p>}
+        </section>
         {error && <p className="modal-error">{error}</p>}
         <div className="privacy-note">聊天和题目图片保存在这台电脑上。当前版本不会主动联网搜索。</div>
         <div className="modal-actions">
-          <button className="danger-text" onClick={() => onClear(currentPin)}>清除{profile.name}的记录</button>
+          <button className="danger-text" onClick={onClear}>清除{profile.name}的记录</button>
           <div><button className="secondary" onClick={onClose}>取消</button><button className="primary" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存设置"}</button></div>
         </div>
       </section>
@@ -489,7 +516,7 @@ export default function App() {
   const [text, setText] = useState("");
   const [image, setImage] = useState(null);
   const [mode, setMode] = useState("guide");
-  const [settings, setSettings] = useState({ gradeLevel: "junior", responseStyle: "concise", learningMode: "guide", reasoningEffort: "medium", model: "gpt-5.6-sol", pinSet: false });
+  const [settings, setSettings] = useState({ gradeLevel: "junior", responseStyle: "concise", learningMode: "guide", reasoningEffort: "medium", model: "gpt-5.6-sol" });
   const [models, setModels] = useState(["gpt-5.6-sol"]);
   const [showSettings, setShowSettings] = useState(false);
   const [showProfiles, setShowProfiles] = useState(false);
@@ -607,10 +634,8 @@ export default function App() {
 
   async function deleteSession(session) {
     if (!window.confirm(`删除“${session.title}”？删除后不能恢复。`)) return;
-    const pin = settings.pinSet ? window.prompt("请输入家长 PIN：") : "";
-    if (settings.pinSet && pin === null) return;
     try {
-      await api(`/api/sessions/${session.id}`, { method: "DELETE", body: JSON.stringify({ pin }) });
+      await api(`/api/sessions/${session.id}`, { method: "DELETE", body: "{}" });
       if (activeId === session.id) await newChat();
       await refreshSessions();
     } catch (reason) {
@@ -618,10 +643,10 @@ export default function App() {
     }
   }
 
-  async function clearAll(pin) {
+  async function clearAll() {
     if (!window.confirm(`确定清除${activeProfile?.name || "当前档案"}的全部聊天记录和题目图片？此操作不能恢复。`)) return;
     try {
-      await api("/api/data", { method: "DELETE", body: JSON.stringify({ pin, profileId: activeProfileId }) });
+      await api("/api/data", { method: "DELETE", body: JSON.stringify({ profileId: activeProfileId }) });
       setShowSettings(false);
       await newChat();
       await refreshSessions();
@@ -772,7 +797,6 @@ export default function App() {
         <ProfileModal
           profiles={profiles}
           activeProfileId={activeProfileId}
-          pinSet={settings.pinSet}
           onClose={() => setShowProfiles(false)}
           onCreated={async (profile) => { setProfiles((current) => [...current, profile]); await loadProfile(profile.id); }}
           onRenamed={(updated) => setProfiles((current) => current.map((profile) => profile.id === updated.id ? updated : profile))}

@@ -156,10 +156,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             raise ApiError("孩子档案不存在。", 404)
         return profile_id
 
-    def _verify_parent_pin(self, pin: str) -> None:
-        if self.server.store.pin_is_set() and not self.server.store.verify_pin(pin):
-            raise ApiError("家长 PIN 不正确。", 403)
-
     def _access_token(self) -> str:
         cookie = SimpleCookie()
         try:
@@ -174,9 +170,9 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _require_auth(self) -> None:
         if not self.server.store.access_password_is_set():
-            raise ApiError("请先设置家庭访问密码。", 401)
+            raise ApiError("请先设置家庭密码。", 401)
         if not self._is_authenticated():
-            raise ApiError("登录已失效，请重新输入家庭访问密码。", 401)
+            raise ApiError("登录已失效，请重新输入家庭密码。", 401)
 
     def _session_cookie(self, token: str, max_age: int = ACCESS_COOKIE_MAX_AGE) -> str:
         parts = [
@@ -194,9 +190,9 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _access_password(value: Any) -> str:
         password = str(value or "")
         if password != password.strip():
-            raise ApiError("家庭访问密码首尾不能有空格。")
+            raise ApiError("家庭密码首尾不能有空格。")
         if not 8 <= len(password) <= 64:
-            raise ApiError("家庭访问密码需要 8—64 个字符。")
+            raise ApiError("家庭密码需要 8—64 个字符。")
         return password
 
     def _login_retry_after(self) -> int:
@@ -265,7 +261,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif parts == ["api", "profiles"]:
                 self._require_auth()
                 body = self._read_json()
-                self._verify_parent_pin(str(body.get("pin", "")))
                 try:
                     profile = self.server.store.create_profile(self._profile_name(body.get("name")))
                 except ValueError as error:
@@ -284,8 +279,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._require_auth()
             parts = self._route_parts()
             body = self._read_json()
+            if parts == ["api", "auth", "password"]:
+                new_password = self._access_password(body.get("newPassword"))
+                self.server.store.set_access_password(new_password)
+                token = self.server.store.create_access_token()
+                self._json(200, {"ok": True}, {"Set-Cookie": self._session_cookie(token)})
+                return
             if len(parts) == 3 and parts[:2] == ["api", "profiles"]:
-                self._verify_parent_pin(str(body.get("pin", "")))
                 try:
                     profile = self.server.store.rename_profile(parts[2], self._profile_name(body.get("name")))
                 except ValueError as error:
@@ -297,8 +297,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             if parts != ["api", "settings"]:
                 raise ApiError("接口不存在。", 404)
             profile_id = self._require_profile(str(body.get("profileId", "")))
-            current_pin = str(body.get("currentPin", ""))
-            self._verify_parent_pin(current_pin)
             grade = body.get("gradeLevel")
             style = body.get("responseStyle")
             mode = body.get("learningMode")
@@ -318,18 +316,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raise ApiError(str(error), 503) from error
             if model not in available_models:
                 raise ApiError("所选模型当前不可用，请重新选择。")
-            new_pin = str(body.get("newPin", ""))
-            if new_pin:
-                if not re.fullmatch(r"\d{4,8}", new_pin):
-                    raise ApiError("家长 PIN 必须是 4—8 位数字。")
-                self.server.store.set_pin(new_pin)
-            new_access_password = str(body.get("newAccessPassword", ""))
-            cookie_headers = None
-            if new_access_password:
-                self.server.store.set_access_password(self._access_password(new_access_password))
-                cookie_headers = {"Set-Cookie": self._session_cookie(self.server.store.create_access_token())}
             self.server.store.update_settings(profile_id, grade, style, mode, reasoning_effort, model)
-            self._json(200, self.server.store.get_settings(profile_id), cookie_headers)
+            self._json(200, self.server.store.get_settings(profile_id))
         except ApiError as error:
             self._json(error.status, {"error": str(error)})
         except Exception as error:  # pragma: no cover
@@ -341,8 +329,6 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._require_auth()
             parts = self._route_parts()
             body = self._read_json()
-            pin = str(body.get("pin", ""))
-            self._verify_parent_pin(pin)
             if len(parts) == 3 and parts[:2] == ["api", "sessions"]:
                 if not self.server.store.delete_session(parts[2]):
                     raise ApiError("会话不存在。", 404)
@@ -411,7 +397,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         body = self._read_json()
         password = self._access_password(body.get("password"))
         if not self.server.store.set_initial_access_password(password):
-            raise ApiError("家庭访问密码已经设置，请直接登录。", 409)
+            raise ApiError("家庭密码已经设置，请直接登录。", 409)
         token = self.server.store.create_access_token()
         self._clear_login_failures()
         self._json(201, {"ok": True}, {"Set-Cookie": self._session_cookie(token)})
@@ -428,10 +414,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         password = str(body.get("password", ""))
         if not self.server.store.access_password_is_set():
-            raise ApiError("请先设置家庭访问密码。", 409)
+            raise ApiError("请先设置家庭密码。", 409)
         if not self.server.store.verify_access_password(password):
             self._record_login_failure()
-            raise ApiError("家庭访问密码不正确。", 401)
+            raise ApiError("家庭密码不正确。", 401)
         self._clear_login_failures()
         token = self.server.store.create_access_token()
         self._json(200, {"ok": True}, {"Set-Cookie": self._session_cookie(token)})
@@ -548,17 +534,23 @@ def main() -> None:
     parser.add_argument("--host", default=os.environ.get("STUDY_AGENT_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("STUDY_AGENT_PORT", "8765")))
     parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("STUDY_AGENT_DATA_DIR", APP_ROOT / "data")))
-    parser.add_argument("--reset-access-password", action="store_true", help="交互式重置家庭访问密码后退出")
+    parser.add_argument(
+        "--reset-family-password",
+        "--reset-access-password",
+        dest="reset_family_password",
+        action="store_true",
+        help="交互式重置家庭密码后退出",
+    )
     args = parser.parse_args()
 
-    if args.reset_access_password:
-        password = getpass.getpass("新的家庭访问密码（8—64 个字符）：")
+    if args.reset_family_password:
+        password = getpass.getpass("新的家庭密码（8—64 个字符）：")
         if password != password.strip() or not 8 <= len(password) <= 64:
             raise SystemExit("密码需要 8—64 个字符，且首尾不能有空格。")
         if password != getpass.getpass("请再输入一次："):
             raise SystemExit("两次输入的密码不一致。")
         StudyStore(args.data_dir, default_model=os.environ.get("STUDY_AGENT_MODEL", "gpt-5.6-sol")).set_access_password(password)
-        print("家庭访问密码已重置，所有设备需要重新登录。")
+        print("家庭密码已重置，所有设备需要重新登录。")
         return
 
     try:

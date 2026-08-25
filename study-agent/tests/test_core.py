@@ -41,12 +41,6 @@ class StorageTests(unittest.TestCase):
         self.assertTrue(self.store.delete_session(session["id"]))
         self.assertIsNone(self.store.get_session(session["id"]))
 
-    def test_parent_pin(self) -> None:
-        self.assertTrue(self.store.verify_pin("anything"))
-        self.store.set_pin("1234")
-        self.assertTrue(self.store.verify_pin("1234"))
-        self.assertFalse(self.store.verify_pin("0000"))
-
     def test_access_password_tokens_are_revoked_when_password_changes(self) -> None:
         self.assertTrue(self.store.set_initial_access_password("family-pass"))
         self.assertFalse(self.store.set_initial_access_password("other-pass"))
@@ -258,14 +252,13 @@ class HttpProtocolTests(unittest.TestCase):
                 server.server_close()
                 thread.join(timeout=2)
 
-    def test_profile_crud_requires_parent_pin(self) -> None:
+    def test_profile_crud_uses_authenticated_family_session(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             web = root / "web"
             web.mkdir()
             (web / "index.html").write_text("ok", encoding="utf-8")
             server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
-            server.store.set_pin("1234")
             access_cookie = enable_access(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
@@ -283,22 +276,59 @@ class HttpProtocolTests(unittest.TestCase):
                     connection.close()
 
             try:
-                status, _ = request("POST", "/api/profiles", {"name": "小明", "pin": "0000"})
-                self.assertEqual(403, status)
-
-                status, profile = request("POST", "/api/profiles", {"name": "小明", "pin": "1234"})
+                status, profile = request("POST", "/api/profiles", {"name": "小明"})
                 self.assertEqual(201, status)
                 profile_id = profile["id"]
 
-                status, renamed = request(
-                    "PUT", f"/api/profiles/{profile_id}", {"name": "小明同学", "pin": "1234"}
-                )
+                status, renamed = request("PUT", f"/api/profiles/{profile_id}", {"name": "小明同学"})
                 self.assertEqual(200, status)
                 self.assertEqual("小明同学", renamed["name"])
 
-                status, _ = request("DELETE", f"/api/profiles/{profile_id}", {"pin": "1234"})
+                status, _ = request("DELETE", f"/api/profiles/{profile_id}", {})
                 self.assertEqual(200, status)
                 self.assertEqual(1, len(server.store.list_profiles()))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+    def test_authenticated_session_can_reset_family_password(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            web = root / "web"
+            web.mkdir()
+            (web / "index.html").write_text("ok", encoding="utf-8")
+            server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
+            old_cookie = enable_access(server)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            def request(method: str, path: str, payload: dict, cookie: str) -> tuple[int, dict, str]:
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                try:
+                    body = json.dumps(payload)
+                    connection.request(
+                        method,
+                        path,
+                        body=body,
+                        headers={"Content-Type": "application/json", "Cookie": cookie},
+                    )
+                    response = connection.getresponse()
+                    return response.status, json.loads(response.read()), response.getheader("Set-Cookie", "")
+                finally:
+                    connection.close()
+
+            try:
+                status, body, set_cookie = request(
+                    "PUT", "/api/auth/password", {"newPassword": "new-family-pass"}, old_cookie
+                )
+                self.assertEqual(200, status)
+                self.assertEqual({"ok": True}, body)
+                self.assertIn("HttpOnly", set_cookie)
+                self.assertFalse(server.store.verify_access_token(old_cookie.split("=", 1)[1]))
+                self.assertTrue(server.store.verify_access_password("new-family-pass"))
+                new_cookie = set_cookie.split(";", 1)[0]
+                self.assertTrue(server.store.verify_access_token(new_cookie.split("=", 1)[1]))
             finally:
                 server.shutdown()
                 server.server_close()

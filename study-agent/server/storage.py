@@ -124,6 +124,10 @@ class StudyStore:
                         (profile["id"], key, legacy.get(key, fallback)),
                     )
 
+            # Older releases had a separate parent PIN. Access is now controlled
+            # by the single family password, so discard the obsolete credential.
+            db.execute("DELETE FROM settings WHERE key='pin_hash'")
+
     def list_profiles(self) -> list[dict[str, Any]]:
         with self.connect() as db:
             rows = db.execute(
@@ -379,14 +383,12 @@ class StudyStore:
                 row["key"]: row["value"]
                 for row in db.execute("SELECT key, value FROM profile_settings WHERE profile_id=?", (profile_id,))
             }
-            pin_set = db.execute("SELECT 1 FROM settings WHERE key='pin_hash'").fetchone() is not None
         return {
             "gradeLevel": pairs.get("grade_level", "junior"),
             "responseStyle": pairs.get("response_style", "concise"),
             "learningMode": pairs.get("learning_mode", "guide"),
             "reasoningEffort": pairs.get("reasoning_effort", "medium"),
             "model": pairs.get("model", self.default_model),
-            "pinSet": pin_set,
         }
 
     def update_settings(
@@ -412,25 +414,6 @@ class StudyStore:
                        ON CONFLICT(profile_id, key) DO UPDATE SET value=excluded.value""",
                     (profile_id, key, value),
                 )
-
-    def set_pin(self, pin: str) -> None:
-        encoded = self._encode_password(pin)
-        with self.connect() as db:
-            db.execute(
-                "INSERT INTO settings(key, value) VALUES ('pin_hash', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (encoded,),
-            )
-
-    def verify_pin(self, pin: str) -> bool:
-        with self.connect() as db:
-            row = db.execute("SELECT value FROM settings WHERE key='pin_hash'").fetchone()
-        if row is None:
-            return True
-        return self._verify_password(pin, row["value"])
-
-    def pin_is_set(self) -> bool:
-        with self.connect() as db:
-            return db.execute("SELECT 1 FROM settings WHERE key='pin_hash'").fetchone() is not None
 
     @staticmethod
     def _encode_password(password: str) -> str:
@@ -484,7 +467,7 @@ class StudyStore:
         with self.connect() as db:
             row = db.execute("SELECT value FROM settings WHERE key='access_session_secret'").fetchone()
         if row is None:
-            raise ValueError("家庭访问密码尚未设置。")
+            raise ValueError("家庭密码尚未设置。")
         payload = f"{int(time.time()) + lifetime_seconds}.{secrets.token_urlsafe(18)}"
         signature = hmac.new(bytes.fromhex(row["value"]), payload.encode("utf-8"), hashlib.sha256).hexdigest()
         return f"{payload}.{signature}"

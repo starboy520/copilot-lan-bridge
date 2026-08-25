@@ -159,6 +159,13 @@ button:focus-visible, textarea:focus-visible, select:focus-visible, input:focus-
 .modal select, .modal input { width: 100%; border: 1px solid #d5ddd6; border-radius: 10px; padding: 10px 11px; background: white; outline: 0; color: var(--ink); }
 .privacy-note { background: #f0f3ed; border-radius: 10px; padding: 10px 12px; color: #758078; font-size: 11px; line-height: 1.6; margin-top: 16px; }
 .modal-error { background: #fff0ed; color: #a24c40; padding: 9px 11px; border-radius: 9px; font-size: 12px; }
+.modal-success { margin: 10px 0 0; color: #34785d; font-size: 12px; font-weight: 650; }
+.password-reset-section { margin-top: 20px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; background: #f7f9f5; }
+.password-reset-section h3 { margin: 0 0 5px; color: var(--ink); font-size: 14px; }
+.password-reset-section > p { margin: 0 0 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.password-reset-section label { margin: 10px 0; }
+.password-reset-button { padding: 9px 13px; border-radius: 9px; cursor: pointer; }
+.password-reset-button:disabled { opacity: .55; cursor: default; }
 .modal-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 21px; gap: 12px; }
 .modal-actions > div { display: flex; gap: 8px; }
 .modal-actions button { border-radius: 9px; padding: 9px 13px; cursor: pointer; }
