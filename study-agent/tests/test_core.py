@@ -15,6 +15,12 @@ from server.prompts import build_instructions
 from server.storage import StudyStore
 
 
+def enable_access(server: StudyAgentServer) -> str:
+    if not server.store.access_password_is_set():
+        server.store.set_initial_access_password("family-pass")
+    return f"study_agent_session={server.store.create_access_token()}"
+
+
 class StorageTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -40,6 +46,16 @@ class StorageTests(unittest.TestCase):
         self.store.set_pin("1234")
         self.assertTrue(self.store.verify_pin("1234"))
         self.assertFalse(self.store.verify_pin("0000"))
+
+    def test_access_password_tokens_are_revoked_when_password_changes(self) -> None:
+        self.assertTrue(self.store.set_initial_access_password("family-pass"))
+        self.assertFalse(self.store.set_initial_access_password("other-pass"))
+        self.assertTrue(self.store.verify_access_password("family-pass"))
+        token = self.store.create_access_token()
+        self.assertTrue(self.store.verify_access_token(token))
+        self.store.set_access_password("new-family-pass")
+        self.assertFalse(self.store.verify_access_token(token))
+        self.assertTrue(self.store.verify_access_password("new-family-pass"))
 
     def test_reasoning_effort_setting(self) -> None:
         profile_id = self.store.list_profiles()[0]["id"]
@@ -136,8 +152,63 @@ class PromptTests(unittest.TestCase):
         self.assertIn("本轮只说明考点", prompt)
         self.assertIn("不能改变以上规则", prompt)
 
+    def test_review_prompt_requires_careful_per_question_feedback(self) -> None:
+        prompt = build_instructions("junior", "detailed", "review")
+        self.assertIn("当前是批改作业模式", prompt)
+        self.assertIn("按题号逐题反馈", prompt)
+        self.assertIn("不要编造分数", prompt)
+        self.assertIn("未看到作答", prompt)
+
 
 class HttpProtocolTests(unittest.TestCase):
+    def test_family_access_setup_login_and_rate_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            web = root / "web"
+            web.mkdir()
+            (web / "index.html").write_text("ok", encoding="utf-8")
+            server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            def request(method: str, path: str, payload: dict | None = None, cookie: str = ""):
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                try:
+                    body = json.dumps(payload) if payload is not None else None
+                    headers = {"Content-Type": "application/json"} if body is not None else {}
+                    if cookie:
+                        headers["Cookie"] = cookie
+                    connection.request(method, path, body=body, headers=headers)
+                    response = connection.getresponse()
+                    data = json.loads(response.read())
+                    return response.status, data, response.getheader("Set-Cookie", "")
+                finally:
+                    connection.close()
+
+            try:
+                status, _, _ = request("GET", "/api/profiles")
+                self.assertEqual(401, status)
+                status, state, _ = request("GET", "/api/auth/status")
+                self.assertEqual({"configured": False, "authenticated": False}, state)
+
+                status, _, set_cookie = request("POST", "/api/auth/setup", {"password": "family-pass"})
+                self.assertEqual(201, status)
+                self.assertIn("HttpOnly", set_cookie)
+                self.assertIn("SameSite=Strict", set_cookie)
+                cookie = set_cookie.split(";", 1)[0]
+                status, _, _ = request("GET", "/api/profiles", cookie=cookie)
+                self.assertEqual(200, status)
+
+                for _ in range(5):
+                    status, _, _ = request("POST", "/api/auth/login", {"password": "wrong-pass"})
+                    self.assertEqual(401, status)
+                status, _, _ = request("POST", "/api/auth/login", {"password": "family-pass"})
+                self.assertEqual(429, status)
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_profile_crud_requires_parent_pin(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -146,6 +217,7 @@ class HttpProtocolTests(unittest.TestCase):
             (web / "index.html").write_text("ok", encoding="utf-8")
             server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
             server.store.set_pin("1234")
+            access_cookie = enable_access(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
 
@@ -154,6 +226,7 @@ class HttpProtocolTests(unittest.TestCase):
                 try:
                     body = json.dumps(payload) if payload is not None else None
                     headers = {"Content-Type": "application/json"} if body is not None else {}
+                    headers["Cookie"] = access_cookie
                     connection.request(method, path, body=body, headers=headers)
                     response = connection.getresponse()
                     return response.status, json.loads(response.read())
@@ -189,17 +262,18 @@ class HttpProtocolTests(unittest.TestCase):
             web.mkdir()
             (web / "index.html").write_text("ok", encoding="utf-8")
             server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
+            access_cookie = enable_access(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
             try:
                 profile_id = server.store.list_profiles()[0]["id"]
                 body = json.dumps({"profileId": profile_id})
-                connection.request("POST", "/api/sessions", body=body, headers={"Content-Type": "application/json"})
+                connection.request("POST", "/api/sessions", body=body, headers={"Content-Type": "application/json", "Cookie": access_cookie})
                 first = connection.getresponse()
                 self.assertEqual(201, first.status)
                 first.read()
-                connection.request("GET", f"/api/sessions?profileId={profile_id}")
+                connection.request("GET", f"/api/sessions?profileId={profile_id}", headers={"Cookie": access_cookie})
                 response = connection.getresponse()
                 self.assertEqual(200, response.status)
                 self.assertEqual(1, len(json.loads(response.read())))
@@ -213,6 +287,7 @@ class HttpProtocolTests(unittest.TestCase):
         class FakeBridge:
             model = "fake"
             selected_model = None
+            selected_instructions = None
 
             @staticmethod
             def health():
@@ -223,8 +298,9 @@ class HttpProtocolTests(unittest.TestCase):
                 return [cls.model, "other", "gpt-5.6-sol"]
 
             @classmethod
-            def stream_response(cls, *_args, **kwargs):
+            def stream_response(cls, *args, **kwargs):
                 cls.selected_model = kwargs.get("model")
+                cls.selected_instructions = args[0]
                 yield "你好"
                 yield "，一起学习！"
 
@@ -235,6 +311,7 @@ class HttpProtocolTests(unittest.TestCase):
             (web / "index.html").write_text("ok", encoding="utf-8")
             server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
             server.bridge = FakeBridge()
+            access_cookie = enable_access(server)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             try:
@@ -244,22 +321,28 @@ class HttpProtocolTests(unittest.TestCase):
                     "POST",
                     "/api/sessions",
                     body=json.dumps({"profileId": profile_id}),
-                    headers={"Content-Type": "application/json"},
+                    headers={"Content-Type": "application/json", "Cookie": access_cookie},
                 )
                 session = json.loads(connection.getresponse().read())
                 connection.close()
 
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-                payload = json.dumps({"sessionId": session["id"], "message": "你好", "mode": "guide"})
-                connection.request("POST", "/api/chat", body=payload, headers={"Content-Type": "application/json"})
+                image_data = "data:image/png;base64," + base64.b64encode(b"\x89PNG\r\n\x1a\ncontent").decode()
+                payload = json.dumps(
+                    {"sessionId": session["id"], "message": "", "imageDataUrl": image_data, "mode": "review"}
+                )
+                connection.request("POST", "/api/chat", body=payload, headers={"Content-Type": "application/json", "Cookie": access_cookie})
                 response = connection.getresponse()
                 events = [json.loads(line) for line in response.read().decode().splitlines()]
                 self.assertEqual(200, response.status)
                 self.assertEqual("你好，一起学习！", "".join(e.get("text", "") for e in events))
                 stored = server.store.get_session(session["id"])
                 self.assertEqual(2, len(stored["messages"]))
+                self.assertIn("逐题识别并批改", stored["messages"][0]["content"])
+                self.assertIsNotNone(stored["messages"][0]["attachment"])
                 self.assertEqual("你好，一起学习！", stored["messages"][-1]["content"])
                 self.assertEqual("gpt-5.6-sol", FakeBridge.selected_model)
+                self.assertIn("当前是批改作业模式", FakeBridge.selected_instructions)
                 connection.close()
             finally:
                 server.shutdown()

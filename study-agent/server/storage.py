@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import secrets
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -412,9 +414,7 @@ class StudyStore:
                 )
 
     def set_pin(self, pin: str) -> None:
-        salt = os.urandom(16)
-        digest = hashlib.scrypt(pin.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
-        encoded = f"{salt.hex()}${digest.hex()}"
+        encoded = self._encode_password(pin)
         with self.connect() as db:
             db.execute(
                 "INSERT INTO settings(key, value) VALUES ('pin_hash', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
@@ -426,13 +426,80 @@ class StudyStore:
             row = db.execute("SELECT value FROM settings WHERE key='pin_hash'").fetchone()
         if row is None:
             return True
-        try:
-            salt_hex, digest_hex = row["value"].split("$", 1)
-            actual = hashlib.scrypt(pin.encode("utf-8"), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
-            return hmac.compare_digest(actual.hex(), digest_hex)
-        except (ValueError, TypeError):
-            return False
+        return self._verify_password(pin, row["value"])
 
     def pin_is_set(self) -> bool:
         with self.connect() as db:
             return db.execute("SELECT 1 FROM settings WHERE key='pin_hash'").fetchone() is not None
+
+    @staticmethod
+    def _encode_password(password: str) -> str:
+        salt = os.urandom(16)
+        digest = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=2**14, r=8, p=1)
+        return f"{salt.hex()}${digest.hex()}"
+
+    @staticmethod
+    def _verify_password(password: str, encoded: str) -> bool:
+        try:
+            salt_hex, digest_hex = encoded.split("$", 1)
+            actual = hashlib.scrypt(password.encode("utf-8"), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
+            return hmac.compare_digest(actual.hex(), digest_hex)
+        except (ValueError, TypeError):
+            return False
+
+    def access_password_is_set(self) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM settings WHERE key='access_password_hash'").fetchone() is not None
+
+    def set_initial_access_password(self, password: str) -> bool:
+        encoded = self._encode_password(password)
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT 1 FROM settings WHERE key='access_password_hash'").fetchone() is not None:
+                return False
+            db.execute("INSERT INTO settings(key, value) VALUES ('access_password_hash', ?)", (encoded,))
+            db.execute("INSERT INTO settings(key, value) VALUES ('access_session_secret', ?)", (secrets.token_hex(32),))
+        return True
+
+    def set_access_password(self, password: str) -> None:
+        encoded = self._encode_password(password)
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO settings(key, value) VALUES ('access_password_hash', ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (encoded,),
+            )
+            db.execute(
+                """INSERT INTO settings(key, value) VALUES ('access_session_secret', ?)
+                   ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (secrets.token_hex(32),),
+            )
+
+    def verify_access_password(self, password: str) -> bool:
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='access_password_hash'").fetchone()
+        return row is not None and self._verify_password(password, row["value"])
+
+    def create_access_token(self, lifetime_seconds: int = 30 * 24 * 60 * 60) -> str:
+        with self.connect() as db:
+            row = db.execute("SELECT value FROM settings WHERE key='access_session_secret'").fetchone()
+        if row is None:
+            raise ValueError("家庭访问密码尚未设置。")
+        payload = f"{int(time.time()) + lifetime_seconds}.{secrets.token_urlsafe(18)}"
+        signature = hmac.new(bytes.fromhex(row["value"]), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"{payload}.{signature}"
+
+    def verify_access_token(self, token: str) -> bool:
+        try:
+            expires_text, nonce, signature = token.split(".", 2)
+            if int(expires_text) < int(time.time()) or not nonce:
+                return False
+            with self.connect() as db:
+                row = db.execute("SELECT value FROM settings WHERE key='access_session_secret'").fetchone()
+            if row is None:
+                return False
+            payload = f"{expires_text}.{nonce}"
+            expected = hmac.new(bytes.fromhex(row["value"]), payload.encode("utf-8"), hashlib.sha256).hexdigest()
+            return hmac.compare_digest(signature, expected)
+        except (ValueError, TypeError):
+            return False

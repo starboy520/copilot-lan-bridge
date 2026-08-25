@@ -1,8 +1,18 @@
 # 小问号学习助手
 
-面向小朋友的家庭学习 Web 应用，支持连续对话、拍照讲题、分步提示、答案检查、数学公式和 C++ 代码讲解。模型请求由 Python 后端转发到 `copilot-lan-bridge`，浏览器不会接触 bridge 密钥。
+面向小朋友的家庭学习 Web 应用，支持连续对话、拍照讲题、作业批改、分步提示、答案检查、数学公式和 C++ 代码讲解。模型请求由 Python 后端转发到 `copilot-lan-bridge`，浏览器不会接触 bridge 密钥。
 
 支持多个孩子档案：每个孩子拥有独立的聊天记录和学习设置，家长 PIN 全局共用。首次升级到档案版本时，原有聊天和设置会自动归入“孩子”默认档案。
+
+首次打开会要求设置一个 8—64 字符的家庭访问密码。之后每台设备必须登录才能访问聊天、档案、设置和题目图片；连续输错 5 次会暂时锁定。家庭访问密码与家长 PIN 用途不同：前者控制进入应用，后者保护修改设置和删除数据。
+
+忘记家庭访问密码时，可在服务器终端交互式重置（密码不会出现在命令历史中）：
+
+```bash
+cd ~/copilot-lan-bridge/study-agent
+python3 -m server.app --reset-access-password
+# Docker 部署：docker compose exec study-agent python3 -m server.app --reset-access-password
+```
 
 ## 快速开始（Windows）
 
@@ -40,6 +50,25 @@ chmod +x start.sh
 ./start.sh
 ```
 
+### Linux 开机自启动
+
+如果仓库位于 `~/copilot-lan-bridge`，可以像 bridge 一样安装为当前用户的 systemd 服务：
+
+```bash
+cd ~/copilot-lan-bridge/study-agent
+chmod +x scripts/install-linux-service.sh
+./scripts/install-linux-service.sh
+```
+
+安装后可用以下命令查看状态和日志：
+
+```bash
+systemctl --user status study-agent.service
+journalctl --user -u study-agent.service -f
+```
+
+服务会在 `copilot-lan-bridge.service` 之后启动，异常退出时自动重启。如果安装脚本提示需要启用 linger，请按提示执行一次 `sudo loginctl enable-linger "$USER"`，这样无需登录也能开机启动。
+
 如果 bridge 位于另一台机器，`COPILOT_BRIDGE_URL` 必须填写学习助手服务器能够访问的地址，并在防火墙上只允许两台服务器之间通信。
 
 ## Docker / Compose
@@ -67,15 +96,15 @@ curl http://127.0.0.1:8765/api/health
 
 ## 公网部署
 
-当前版本定位于可信家庭网络，不能直接把 `8765` 端口映射到公网。公网使用至少需要：
+当前版本提供共享家庭密码准入，但仍定位于可信家庭网络，不能直接把 `8765` 端口映射到公网。公网使用至少需要：
 
 - Nginx、Caddy 等 HTTPS 反向代理；
-- 正式的用户登录与会话认证；
+- 根据实际风险增加独立账号或 VPN 准入（推荐 Tailscale/ZeroTier）；
 - 请求限流、访问日志和异常告警；
 - 防火墙禁止公网直接访问 bridge；
 - 定期备份并限制 `data` 目录访问权限。
 
-仅配置 HTTPS 并不等于已经具备公网安全性。现有家长 PIN 只保护设置和删除操作，不是登录系统。
+仅配置 HTTPS 或共享密码并不等于已经具备公网安全性。反向代理使用 HTTPS 时应传递 `X-Forwarded-Proto: https`，后端会为登录 Cookie 加上 `Secure` 属性。
 
 ## 配置项
 
@@ -106,8 +135,10 @@ curl http://127.0.0.1:8765/api/health
 ## 功能与边界
 
 - 支持流式对话、单张图片、Markdown、LaTeX、C++、历史记录和响应式页面。
-- 支持引导/直接讲解模式、学段、回答详略、模型和思考深度设置。
+- 支持引导、直接讲解和批改作业模式，以及学段、回答详略、模型和思考深度设置。
+- 批改作业模式可直接上传图片，逐题判断、指出第一处错误并给出订正建议；看不清或缺少作答时会明确提示。
 - 支持最多 8 个孩子档案，可切换、重命名和删除；档案管理受家长 PIN 保护。
+- 支持共享家庭密码登录、HttpOnly 会话 Cookie、退出登录和连续输错限制。
 - 图片支持 JPG、PNG、WebP；原图 15 MB 以内，压缩后不超过 3 MB。
 - 图片默认保存七天后清理。
 - 不联网搜索，不执行模型生成的代码或系统命令。

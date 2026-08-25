@@ -3,12 +3,16 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import getpass
 import json
 import mimetypes
 import os
 import re
 import sys
+import threading
+import time
 import urllib.parse
+from http.cookies import SimpleCookie
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -24,6 +28,11 @@ MAX_JSON_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_BYTES = 3 * 1024 * 1024
 MAX_MESSAGE_CHARS = 10_000
 MAX_PROFILE_NAME_CHARS = 20
+ACCESS_COOKIE_NAME = "study_agent_session"
+ACCESS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60
+LOGIN_WINDOW_SECONDS = 10 * 60
+LOGIN_BLOCK_SECONDS = 15 * 60
+MAX_LOGIN_FAILURES = 5
 IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -81,6 +90,8 @@ class StudyAgentServer(ThreadingHTTPServer):
             default_model,
         )
         self.store = StudyStore(data_dir, default_model=default_model)
+        self.auth_lock = threading.Lock()
+        self.auth_failures: dict[str, list[float]] = {}
 
 
 class RequestHandler(BaseHTTPRequestHandler):
@@ -105,8 +116,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def _json(self, status: int, payload: Any) -> None:
-        self._send_bytes(status, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+    def _json(self, status: int, payload: Any, extra_headers: dict[str, str] | None = None) -> None:
+        self._send_bytes(
+            status,
+            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            "application/json; charset=utf-8",
+            extra_headers,
+        )
 
     def _read_json(self) -> dict[str, Any]:
         content_type = self.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
@@ -144,6 +160,67 @@ class RequestHandler(BaseHTTPRequestHandler):
         if self.server.store.pin_is_set() and not self.server.store.verify_pin(pin):
             raise ApiError("家长 PIN 不正确。", 403)
 
+    def _access_token(self) -> str:
+        cookie = SimpleCookie()
+        try:
+            cookie.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return ""
+        morsel = cookie.get(ACCESS_COOKIE_NAME)
+        return morsel.value if morsel else ""
+
+    def _is_authenticated(self) -> bool:
+        return self.server.store.verify_access_token(self._access_token())
+
+    def _require_auth(self) -> None:
+        if not self.server.store.access_password_is_set():
+            raise ApiError("请先设置家庭访问密码。", 401)
+        if not self._is_authenticated():
+            raise ApiError("登录已失效，请重新输入家庭访问密码。", 401)
+
+    def _session_cookie(self, token: str, max_age: int = ACCESS_COOKIE_MAX_AGE) -> str:
+        parts = [
+            f"{ACCESS_COOKIE_NAME}={token}",
+            "Path=/",
+            f"Max-Age={max_age}",
+            "HttpOnly",
+            "SameSite=Strict",
+        ]
+        if self.headers.get("X-Forwarded-Proto", "").lower() == "https":
+            parts.append("Secure")
+        return "; ".join(parts)
+
+    @staticmethod
+    def _access_password(value: Any) -> str:
+        password = str(value or "")
+        if password != password.strip():
+            raise ApiError("家庭访问密码首尾不能有空格。")
+        if not 8 <= len(password) <= 64:
+            raise ApiError("家庭访问密码需要 8—64 个字符。")
+        return password
+
+    def _login_retry_after(self) -> int:
+        address = self.client_address[0]
+        now = time.monotonic()
+        with self.server.auth_lock:
+            failures = [value for value in self.server.auth_failures.get(address, []) if now - value < LOGIN_BLOCK_SECONDS]
+            self.server.auth_failures[address] = failures
+            if len(failures) < MAX_LOGIN_FAILURES:
+                return 0
+            return max(1, int(LOGIN_BLOCK_SECONDS - (now - failures[-1])))
+
+    def _record_login_failure(self) -> None:
+        address = self.client_address[0]
+        now = time.monotonic()
+        with self.server.auth_lock:
+            failures = [value for value in self.server.auth_failures.get(address, []) if now - value < LOGIN_WINDOW_SECONDS]
+            failures.append(now)
+            self.server.auth_failures[address] = failures
+
+    def _clear_login_failures(self) -> None:
+        with self.server.auth_lock:
+            self.server.auth_failures.pop(self.client_address[0], None)
+
     @staticmethod
     def _profile_name(value: Any) -> str:
         name = " ".join(str(value or "").split())
@@ -157,6 +234,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             parts = self._route_parts()
             if parts[:1] == ["api"]:
+                if parts not in (["api", "health"], ["api", "auth", "status"]):
+                    self._require_auth()
                 self._handle_api_get(parts[1:])
             else:
                 self._serve_static()
@@ -169,13 +248,22 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
             parts = self._route_parts()
-            if parts == ["api", "chat"]:
+            if parts == ["api", "auth", "setup"]:
+                self._auth_setup()
+            elif parts == ["api", "auth", "login"]:
+                self._auth_login()
+            elif parts == ["api", "auth", "logout"]:
+                self._json(200, {"ok": True}, {"Set-Cookie": self._session_cookie("", 0)})
+            elif parts == ["api", "chat"]:
+                self._require_auth()
                 self._chat()
             elif parts == ["api", "sessions"]:
+                self._require_auth()
                 body = self._read_json()
                 profile_id = self._require_profile(str(body.get("profileId", "")))
                 self._json(201, self.server.store.create_session(profile_id))
             elif parts == ["api", "profiles"]:
+                self._require_auth()
                 body = self._read_json()
                 self._verify_parent_pin(str(body.get("pin", "")))
                 try:
@@ -193,6 +281,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         try:
+            self._require_auth()
             parts = self._route_parts()
             body = self._read_json()
             if len(parts) == 3 and parts[:2] == ["api", "profiles"]:
@@ -219,7 +308,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raise ApiError("学段设置无效。")
             if style not in {"concise", "detailed"}:
                 raise ApiError("回答风格设置无效。")
-            if mode not in {"guide", "direct"}:
+            if mode not in {"guide", "direct", "review"}:
                 raise ApiError("学习模式设置无效。")
             if reasoning_effort not in {"low", "medium", "high"}:
                 raise ApiError("思考深度设置无效。")
@@ -234,8 +323,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"\d{4,8}", new_pin):
                     raise ApiError("家长 PIN 必须是 4—8 位数字。")
                 self.server.store.set_pin(new_pin)
+            new_access_password = str(body.get("newAccessPassword", ""))
+            cookie_headers = None
+            if new_access_password:
+                self.server.store.set_access_password(self._access_password(new_access_password))
+                cookie_headers = {"Set-Cookie": self._session_cookie(self.server.store.create_access_token())}
             self.server.store.update_settings(profile_id, grade, style, mode, reasoning_effort, model)
-            self._json(200, self.server.store.get_settings(profile_id))
+            self._json(200, self.server.store.get_settings(profile_id), cookie_headers)
         except ApiError as error:
             self._json(error.status, {"error": str(error)})
         except Exception as error:  # pragma: no cover
@@ -244,6 +338,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_DELETE(self) -> None:
         try:
+            self._require_auth()
             parts = self._route_parts()
             body = self._read_json()
             pin = str(body.get("pin", ""))
@@ -273,7 +368,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(500, {"error": "服务器发生错误。"})
 
     def _handle_api_get(self, parts: list[str]) -> None:
-        if parts == ["health"]:
+        if parts == ["auth", "status"]:
+            configured = self.server.store.access_password_is_set()
+            self._json(200, {"configured": configured, "authenticated": configured and self._is_authenticated()})
+        elif parts == ["health"]:
             self._json(
                 200,
                 {
@@ -305,9 +403,38 @@ class RequestHandler(BaseHTTPRequestHandler):
             if attachment is None:
                 raise ApiError("图片不存在。", 404)
             path, mime_type = attachment
-            self._send_bytes(200, path.read_bytes(), mime_type)
+            self._send_bytes(200, path.read_bytes(), mime_type, {"Cache-Control": "private, no-store"})
         else:
             raise ApiError("接口不存在。", 404)
+
+    def _auth_setup(self) -> None:
+        body = self._read_json()
+        password = self._access_password(body.get("password"))
+        if not self.server.store.set_initial_access_password(password):
+            raise ApiError("家庭访问密码已经设置，请直接登录。", 409)
+        token = self.server.store.create_access_token()
+        self._clear_login_failures()
+        self._json(201, {"ok": True}, {"Set-Cookie": self._session_cookie(token)})
+
+    def _auth_login(self) -> None:
+        body = self._read_json()
+        retry_after = self._login_retry_after()
+        if retry_after:
+            self._json(
+                429,
+                {"error": f"尝试次数过多，请在约 {max(1, retry_after // 60)} 分钟后重试。"},
+                {"Retry-After": str(retry_after)},
+            )
+            return
+        password = str(body.get("password", ""))
+        if not self.server.store.access_password_is_set():
+            raise ApiError("请先设置家庭访问密码。", 409)
+        if not self.server.store.verify_access_password(password):
+            self._record_login_failure()
+            raise ApiError("家庭访问密码不正确。", 401)
+        self._clear_login_failures()
+        token = self.server.store.create_access_token()
+        self._json(200, {"ok": True}, {"Set-Cookie": self._session_cookie(token)})
 
     def _chat(self) -> None:
         body = self._read_json()
@@ -337,10 +464,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         if parsed_image:
             raw, mime_type, suffix = parsed_image
             attachment_id = self.server.store.add_attachment(raw, mime_type, suffix)
-        stored_message = message or "请帮我识别并讲解这张题目图片。"
+        mode = body.get("mode") if body.get("mode") in {"guide", "direct", "review"} else settings["learningMode"]
+        stored_message = message or (
+            "请逐题识别并批改这张作业图片，判断学生作答是否正确，指出错误并给出订正建议。"
+            if mode == "review"
+            else "请帮我识别并讲解这张题目图片。"
+        )
         self.server.store.add_message(session_id, "user", stored_message, attachment_id=attachment_id)
 
-        mode = body.get("mode") if body.get("mode") in {"guide", "direct"} else settings["learningMode"]
         instructions = build_instructions(settings["gradeLevel"], settings["responseStyle"], mode)
 
         self.send_response(200)
@@ -415,7 +546,18 @@ def main() -> None:
     parser.add_argument("--host", default=os.environ.get("STUDY_AGENT_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("STUDY_AGENT_PORT", "8765")))
     parser.add_argument("--data-dir", type=Path, default=Path(os.environ.get("STUDY_AGENT_DATA_DIR", APP_ROOT / "data")))
+    parser.add_argument("--reset-access-password", action="store_true", help="交互式重置家庭访问密码后退出")
     args = parser.parse_args()
+
+    if args.reset_access_password:
+        password = getpass.getpass("新的家庭访问密码（8—64 个字符）：")
+        if password != password.strip() or not 8 <= len(password) <= 64:
+            raise SystemExit("密码需要 8—64 个字符，且首尾不能有空格。")
+        if password != getpass.getpass("请再输入一次："):
+            raise SystemExit("两次输入的密码不一致。")
+        StudyStore(args.data_dir, default_model=os.environ.get("STUDY_AGENT_MODEL", "gpt-5.6-sol")).set_access_password(password)
+        print("家庭访问密码已重置，所有设备需要重新登录。")
+        return
 
     try:
         server = StudyAgentServer((args.host, args.port), RequestHandler, args.data_dir, APP_ROOT / "web")

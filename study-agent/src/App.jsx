@@ -12,6 +12,8 @@ import {
   Code2,
   ImagePlus,
   Lightbulb,
+  LockKeyhole,
+  LogOut,
   Menu,
   MessageCircleQuestion,
   Pencil,
@@ -42,10 +44,18 @@ const STARTERS = [
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
+    credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "请求失败，请稍后重试。 ");
+  if (!response.ok) {
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      window.dispatchEvent(new Event("study-agent-auth-required"));
+    }
+    const error = new Error(data.error || "请求失败，请稍后重试。 ");
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
@@ -106,7 +116,56 @@ function MarkdownMessage({ children }) {
   );
 }
 
-function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onDelete, onSettings, onClose }) {
+function AccessScreen({ mode, onAuthenticated }) {
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const setup = mode === "setup";
+
+  async function submit(event) {
+    event.preventDefault();
+    if (setup && password !== confirmPassword) {
+      setError("两次输入的密码不一致。");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      await api(setup ? "/api/auth/setup" : "/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+      onAuthenticated();
+    } catch (reason) {
+      if (setup && reason.status === 409) {
+        window.location.reload();
+        return;
+      }
+      setError(reason.message);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="access-screen">
+      <form className="access-card" onSubmit={submit}>
+        <div className="access-mark"><LockKeyhole size={29} /></div>
+        <span className="eyebrow">家庭学习空间</span>
+        <h1>{setup ? "设置家庭访问密码" : "欢迎回来"}</h1>
+        <p>{setup ? "首次使用时设置，全家设备使用同一个密码进入。" : "请输入家庭访问密码，进入孩子的学习空间。"}</p>
+        <label>家庭访问密码<input autoFocus type="password" autoComplete={setup ? "new-password" : "current-password"} minLength="8" maxLength="64" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="8—64 个字符" /></label>
+        {setup && <label>再输入一次<input type="password" autoComplete="new-password" minLength="8" maxLength="64" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} /></label>}
+        {error && <p className="access-error">{error}</p>}
+        <button className="primary access-submit" disabled={submitting || password.length < 8 || (setup && confirmPassword.length < 8)} type="submit">{submitting ? "请稍候…" : setup ? "设置并进入" : "进入学习空间"}</button>
+        <small>连续输错 5 次会暂时锁定。请不要将服务端口直接暴露到公网。</small>
+      </form>
+    </main>
+  );
+}
+
+function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onDelete, onSettings, onLogout, onClose }) {
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="关闭会话列表" onClick={onClose} />}
@@ -141,7 +200,10 @@ function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfil
             </div>
           ))}
         </nav>
-        <button className="settings-button" onClick={onSettings}><Settings size={18} />家长与学习设置</button>
+        <div className="sidebar-actions">
+          <button className="settings-button" onClick={onSettings}><Settings size={18} />家长与学习设置</button>
+          <button className="logout-button" onClick={onLogout} title="退出登录" aria-label="退出登录"><LogOut size={17} /></button>
+        </div>
       </aside>
     </>
   );
@@ -240,7 +302,7 @@ function Composer({ value, setValue, image, setImage, mode, setMode, loading, on
           value={value}
           onChange={(event) => setValue(event.target.value)}
           onKeyDown={keyDown}
-          placeholder={image ? "可以补充：你希望我怎么帮你？" : "输入问题，或拍下一道题…"}
+          placeholder={image ? (mode === "review" ? "可补充批改要求，不填也可以直接发送…" : "可以补充：你希望我怎么帮你？") : (mode === "review" ? "上传作业图片，或粘贴需要批改的作答…" : "输入问题，或拍下一道题…")}
           rows="1"
           maxLength="10000"
           disabled={loading}
@@ -259,6 +321,7 @@ function Composer({ value, setValue, image, setImage, mode, setMode, loading, on
             <select value={mode} onChange={(event) => setMode(event.target.value)} disabled={loading} aria-label="学习模式">
               <option value="guide">引导模式</option>
               <option value="direct">直接讲解</option>
+              <option value="review">批改作业</option>
             </select>
           </div>
           {loading ? (
@@ -345,6 +408,7 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
   const [form, setForm] = useState(settings);
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
+  const [newAccessPassword, setNewAccessPassword] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -354,7 +418,7 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
     try {
       const updated = await api("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ ...form, profileId: profile.id, currentPin, newPin }),
+        body: JSON.stringify({ ...form, profileId: profile.id, currentPin, newPin, newAccessPassword }),
       });
       onSaved(updated);
     } catch (reason) {
@@ -370,11 +434,12 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
         <header><div><span className="eyebrow">{profile.name}的设置</span><h2 id="settings-title">调整学习方式</h2></div><button className="icon-button" onClick={onClose}><X size={20} /></button></header>
         <label>学段<select value={form.gradeLevel} onChange={(e) => setForm({ ...form, gradeLevel: e.target.value })}><option value="primary">小学</option><option value="junior">初中</option><option value="senior">高中</option></select></label>
         <label>回答风格<select value={form.responseStyle} onChange={(e) => setForm({ ...form, responseStyle: e.target.value })}><option value="concise">简洁</option><option value="detailed">详细</option></select></label>
-        <label>默认学习模式<select value={form.learningMode} onChange={(e) => setForm({ ...form, learningMode: e.target.value })}><option value="guide">先提示，再讲答案</option><option value="direct">直接分步骤讲解</option></select></label>
+        <label>默认学习模式<select value={form.learningMode} onChange={(e) => setForm({ ...form, learningMode: e.target.value })}><option value="guide">先提示，再讲答案</option><option value="direct">直接分步骤讲解</option><option value="review">批改作业</option></select></label>
         <label>思考深度<select value={form.reasoningEffort} onChange={(e) => setForm({ ...form, reasoningEffort: e.target.value })}><option value="low">快速</option><option value="medium">标准（推荐）</option><option value="high">深入</option></select></label>
         <label>回答模型<select value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })}>{models.map((model) => <option value={model} key={model}>{model}</option>)}</select></label>
         {settings.pinSet && <label>当前家长 PIN<input type="password" inputMode="numeric" value={currentPin} onChange={(e) => setCurrentPin(e.target.value)} placeholder="修改或删除数据时需要" /></label>}
         <label>{settings.pinSet ? "设置新的 PIN（可不填）" : "设置家长 PIN（推荐）"}<input type="password" inputMode="numeric" value={newPin} onChange={(e) => setNewPin(e.target.value)} placeholder="4—8 位数字" /></label>
+        <label>设置新的家庭访问密码（可选）<input type="password" autoComplete="new-password" minLength="8" maxLength="64" value={newAccessPassword} onChange={(e) => setNewAccessPassword(e.target.value)} placeholder="保存后其他设备需要重新登录" /></label>
         {error && <p className="modal-error">{error}</p>}
         <div className="privacy-note">聊天和题目图片保存在这台电脑上。当前版本不会主动联网搜索。</div>
         <div className="modal-actions">
@@ -387,6 +452,8 @@ function SettingsModal({ profile, settings, models, onClose, onSaved, onClear })
 }
 
 export default function App() {
+  const [authState, setAuthState] = useState("checking");
+  const [authError, setAuthError] = useState("");
   const [profiles, setProfiles] = useState([]);
   const [activeProfileId, setActiveProfileId] = useState(null);
   const [sessions, setSessions] = useState([]);
@@ -414,6 +481,28 @@ export default function App() {
   }, [messages]);
 
   useEffect(() => {
+    api("/api/auth/status")
+      .then((status) => setAuthState(status.authenticated ? "authenticated" : status.configured ? "login" : "setup"))
+      .catch((reason) => { setAuthError(reason.message); setAuthState("error"); });
+  }, []);
+
+  useEffect(() => {
+    const requireLogin = () => {
+      abortRef.current?.abort();
+      setAuthState("login");
+      setProfiles([]);
+      setSessions([]);
+      setMessages([]);
+      setActiveId(null);
+    };
+    window.addEventListener("study-agent-auth-required", requireLogin);
+    return () => window.removeEventListener("study-agent-auth-required", requireLogin);
+  }, []);
+
+  useEffect(() => {
+    if (authState !== "authenticated") return;
+    setBooting(true);
+    setError("");
     Promise.all([api("/api/profiles"), api("/api/health"), api("/api/models")])
       .then(async ([profileData, health, modelData]) => {
         const savedId = window.localStorage.getItem("study-agent-profile-id");
@@ -434,7 +523,7 @@ export default function App() {
       })
       .catch((reason) => setError(reason.message))
       .finally(() => setBooting(false));
-  }, []);
+  }, [authState]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: loading ? "auto" : "smooth" }); }, [messages, loading]);
 
@@ -514,6 +603,17 @@ export default function App() {
     }
   }
 
+  async function logout() {
+    if (loading) abortRef.current?.abort();
+    await api("/api/auth/logout", { method: "POST", body: "{}" }).catch(() => {});
+    setAuthState("login");
+    setSidebarOpen(false);
+    setProfiles([]);
+    setSessions([]);
+    setMessages([]);
+    setActiveId(null);
+  }
+
   async function send(overrideText) {
     const outgoing = (overrideText ?? text).trim();
     if (loading || (!outgoing && !image)) return;
@@ -533,7 +633,7 @@ export default function App() {
       const userMessage = {
         id: `local-user-${Date.now()}`,
         role: "user",
-        content: outgoing || "请帮我识别并讲解这张题目图片。",
+        content: outgoing || (mode === "review" ? "请逐题识别并批改这张作业图片。" : "请帮我识别并讲解这张题目图片。"),
         status: "completed",
         attachment: outgoingImage ? { preview: outgoingImage.dataUrl } : null,
       };
@@ -544,12 +644,14 @@ export default function App() {
       abortRef.current = controller;
       const response = await fetch("/api/chat", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId, message: outgoing, imageDataUrl: outgoingImage?.dataUrl || null, mode }),
         signal: controller.signal,
       });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
+        if (response.status === 401) window.dispatchEvent(new Event("study-agent-auth-required"));
         throw new Error(body.error || "发送失败，请稍后重试。 ");
       }
       const reader = response.body.getReader();
@@ -591,9 +693,19 @@ export default function App() {
     }
   }
 
+  if (authState === "checking") {
+    return <div className="loading-screen full-screen"><div className="loading-dot" /><p>正在检查家庭准入…</p></div>;
+  }
+  if (authState === "setup" || authState === "login") {
+    return <AccessScreen mode={authState} onAuthenticated={() => setAuthState("authenticated")} />;
+  }
+  if (authState === "error") {
+    return <div className="loading-screen full-screen"><p>{authError || "无法连接学习助手。"}</p><button className="secondary" onClick={() => window.location.reload()}>重新加载</button></div>;
+  }
+
   return (
     <div className="app-shell">
-      <Sidebar open={sidebarOpen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onLogout={logout} onClose={() => setSidebarOpen(false)} />
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button>
