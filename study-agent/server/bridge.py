@@ -7,27 +7,61 @@ from collections.abc import Generator
 from typing import Any
 
 
+RESPONSE_TIMEOUT_SECONDS = 180
+
+
 class BridgeError(RuntimeError):
     pass
 
 
-def extract_sse_text_event(data: str) -> tuple[str | None, bool, str | None]:
+def _completed_response_text(response: Any) -> str | None:
+    if not isinstance(response, dict):
+        return None
+    parts: list[str] = []
+    for item in response.get("output", []):
+        if not isinstance(item, dict):
+            continue
+        for content in item.get("content", []):
+            if not isinstance(content, dict):
+                continue
+            text = content.get("text") if content.get("type") == "output_text" else content.get("refusal")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "".join(parts) or None
+
+
+def extract_sse_text_event(data: str) -> tuple[str | None, bool, str | None, bool]:
+    """Return text, completion state, error, and whether text is a final fallback."""
     if not data or data == "[DONE]":
-        return None, data == "[DONE]", None
+        return None, data == "[DONE]", None, False
     try:
         event = json.loads(data)
     except json.JSONDecodeError:
-        return None, False, None
+        return None, False, None, False
+    if not isinstance(event, dict):
+        return None, False, None, False
     event_type = event.get("type")
     if event_type == "response.output_text.delta":
-        return event.get("delta", ""), False, None
+        delta = event.get("delta")
+        return delta if isinstance(delta, str) else None, False, None, False
+    if event_type == "response.refusal.delta":
+        delta = event.get("delta")
+        return delta if isinstance(delta, str) else None, False, None, False
+    if event_type == "response.output_text.done":
+        text = event.get("text")
+        return text if isinstance(text, str) and text else None, False, None, True
+    if event_type == "response.refusal.done":
+        refusal = event.get("refusal")
+        return refusal if isinstance(refusal, str) and refusal else None, False, None, True
     if event_type == "response.completed":
-        return None, True, None
+        return _completed_response_text(event.get("response")), True, None, True
     if event_type in {"response.failed", "error"}:
-        error = event.get("error") or event.get("response", {}).get("error") or {}
+        response = event.get("response")
+        response_error = response.get("error") if isinstance(response, dict) else None
+        error = event.get("error") or response_error or {}
         message = error.get("message") if isinstance(error, dict) else str(error)
-        return None, True, message or "模型生成失败"
-    return None, False, None
+        return None, True, message or "模型生成失败", False
+    return None, False, None, False
 
 
 class CopilotBridgeClient:
@@ -43,7 +77,7 @@ class CopilotBridgeClient:
         method: str = "GET",
         body: dict[str, Any] | None = None,
         accept: str = "application/json",
-        timeout: int = 180,
+        timeout: int = RESPONSE_TIMEOUT_SECONDS,
     ):
         data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body is not None else None
         headers = {"Accept": accept}
@@ -104,15 +138,17 @@ class CopilotBridgeClient:
             "max_output_tokens": 3000,
         }
         try:
+            saw_streamed_text = False
             with self._request("/v1/responses", method="POST", body=body, accept="text/event-stream") as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line.startswith("data:"):
                         continue
-                    delta, completed, error = extract_sse_text_event(line[5:].strip())
+                    delta, completed, error, is_final_fallback = extract_sse_text_event(line[5:].strip())
                     if error:
                         raise BridgeError(error)
-                    if delta:
+                    if delta and (not is_final_fallback or not saw_streamed_text):
+                        saw_streamed_text = True
                         yield delta
                     if completed:
                         return
@@ -123,5 +159,11 @@ class CopilotBridgeClient:
             except (json.JSONDecodeError, AttributeError):
                 message = None
             raise BridgeError(message or f"模型服务返回错误（{error.code}）") from error
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
+        except urllib.error.URLError as error:
+            if isinstance(error.reason, TimeoutError):
+                raise BridgeError("模型响应超过 3 分钟，请重试或缩小图片范围。") from error
+            raise BridgeError("暂时无法连接模型服务，请稍后再试。") from error
+        except TimeoutError as error:
+            raise BridgeError("模型响应超过 3 分钟，请重试或缩小图片范围。") from error
+        except OSError as error:
             raise BridgeError("暂时无法连接模型服务，请稍后再试。") from error

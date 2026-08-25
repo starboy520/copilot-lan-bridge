@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from server.app import ApiError, RequestHandler, StudyAgentServer, parse_image_data_url
-from server.bridge import extract_sse_text_event
+from server.bridge import CopilotBridgeClient, extract_sse_text_event
 from server.prompts import build_instructions
 from server.storage import StudyStore
 
@@ -133,16 +133,65 @@ class InputValidationTests(unittest.TestCase):
 
 
 class BridgeParserTests(unittest.TestCase):
+    class FakeStream(list):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
     def test_delta_event(self) -> None:
-        delta, done, error = extract_sse_text_event('{"type":"response.output_text.delta","delta":"你好"}')
+        delta, done, error, fallback = extract_sse_text_event('{"type":"response.output_text.delta","delta":"你好"}')
         self.assertEqual("你好", delta)
         self.assertFalse(done)
         self.assertIsNone(error)
+        self.assertFalse(fallback)
+
+    def test_output_text_done_can_recover_a_non_streamed_answer(self) -> None:
+        text, done, error, fallback = extract_sse_text_event(
+            '{"type":"response.output_text.done","text":"完整答案"}'
+        )
+        self.assertEqual("完整答案", text)
+        self.assertFalse(done)
+        self.assertIsNone(error)
+        self.assertTrue(fallback)
+
+    def test_completed_event_can_recover_nested_output_text(self) -> None:
+        text, done, error, fallback = extract_sse_text_event(json.dumps({
+            "type": "response.completed",
+            "response": {"output": [{"type": "message", "content": [
+                {"type": "output_text", "text": "最终答案"}
+            ]}]},
+        }))
+        self.assertEqual("最终答案", text)
+        self.assertTrue(done)
+        self.assertIsNone(error)
+        self.assertTrue(fallback)
 
     def test_failed_event(self) -> None:
-        _, done, error = extract_sse_text_event('{"type":"response.failed","response":{"error":{"message":"bad"}}}')
+        _, done, error, _ = extract_sse_text_event('{"type":"response.failed","response":{"error":{"message":"bad"}}}')
         self.assertTrue(done)
         self.assertEqual("bad", error)
+
+    def test_final_text_fallback_is_not_duplicated_after_deltas(self) -> None:
+        client = CopilotBridgeClient("http://bridge", "key", "model")
+        client._request = lambda *_args, **_kwargs: self.FakeStream([
+            b'data: {"type":"response.output_text.delta","delta":"\xe4\xbd\xa0"}\n',
+            b'data: {"type":"response.output_text.delta","delta":"\xe5\xa5\xbd"}\n',
+            b'data: {"type":"response.output_text.done","text":"\xe4\xbd\xa0\xe5\xa5\xbd"}\n',
+            b'data: {"type":"response.completed","response":{"output":[]}}\n',
+        ])
+        output = list(client.stream_response("instructions", [], "question", None))
+        self.assertEqual(["你", "好"], output)
+
+    def test_final_text_fallback_is_used_when_no_deltas_arrive(self) -> None:
+        client = CopilotBridgeClient("http://bridge", "key", "model")
+        client._request = lambda *_args, **_kwargs: self.FakeStream([
+            b'data: {"type":"response.output_text.done","text":"\xe5\xae\x8c\xe6\x95\xb4\xe7\xad\x94\xe6\xa1\x88"}\n',
+            b'data: {"type":"response.completed","response":{"output":[]}}\n',
+        ])
+        output = list(client.stream_response("instructions", [], "question", None))
+        self.assertEqual(["完整答案"], output)
 
 
 class PromptTests(unittest.TestCase):
@@ -335,6 +384,10 @@ class HttpProtocolTests(unittest.TestCase):
                 response = connection.getresponse()
                 events = [json.loads(line) for line in response.read().decode().splitlines()]
                 self.assertEqual(200, response.status)
+                self.assertEqual(
+                    {"type": "status", "message": "图片已收到，正在识别题目和作答…"},
+                    events[0],
+                )
                 self.assertEqual("你好，一起学习！", "".join(e.get("text", "") for e in events))
                 stored = server.store.get_session(session["id"])
                 self.assertEqual(2, len(stored["messages"]))

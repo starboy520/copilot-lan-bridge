@@ -484,6 +484,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         full_text: list[str] = []
         try:
             image_data_url = body.get("imageDataUrl") if parsed_image else None
+            if image_data_url and mode == "review":
+                self._write_stream({"type": "status", "message": "图片已收到，正在识别题目和作答…"})
             for delta in self.server.bridge.stream_response(
                 instructions,
                 history,
@@ -499,13 +501,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 raise BridgeError("模型没有返回可显示的内容。")
             message_id = self.server.store.add_message(session_id, "assistant", final_text)
             self._write_stream({"type": "done", "messageId": message_id})
-        except (BridgeError, BrokenPipeError, ConnectionResetError) as error:
+        except (BridgeError, BrokenPipeError, ConnectionResetError, ConnectionAbortedError) as error:
             if full_text:
                 self.server.store.add_message(session_id, "assistant", "".join(full_text), status="interrupted")
-            if not isinstance(error, (BrokenPipeError, ConnectionResetError)):
+            if not isinstance(error, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
                 try:
                     self._write_stream({"type": "error", "error": str(error)})
-                except (BrokenPipeError, ConnectionResetError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                     pass
         except Exception as error:  # defensive stream boundary
             self.log_error("Unexpected model stream error: %r", error)
@@ -513,7 +515,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.server.store.add_message(session_id, "assistant", "".join(full_text), status="interrupted")
             try:
                 self._write_stream({"type": "error", "error": "回答意外中断，请稍后重试。"})
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 pass
         finally:
             self.close_connection = True

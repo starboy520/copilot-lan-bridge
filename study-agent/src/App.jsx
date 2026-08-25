@@ -229,6 +229,29 @@ function Welcome({ onStarter }) {
   );
 }
 
+function ThinkingIndicator({ imageReview, progressText }) {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  if (!imageReview) return <p>{progressText || "正在想一想…"}</p>;
+  let message = progressText || "图片已收到，正在识别题目和作答…";
+  if (elapsed >= 15) message = "正在逐题核对答案和解题步骤…";
+  if (elapsed >= 45) message = "图片内容较多，仍在认真批改，请稍候…";
+  return (
+    <div className="review-progress">
+      <span>{message}</span>
+      <small>已等待 {elapsed} 秒，图片批改通常需要 30–90 秒</small>
+    </div>
+  );
+}
+
 function Message({ message, isLastAssistant, onQuickAction }) {
   const isUser = message.role === "user";
   return (
@@ -239,7 +262,11 @@ function Message({ message, isLastAssistant, onQuickAction }) {
           <img className="message-image" src={message.attachment.preview || `/api/attachments/${message.attachment.id}`} alt="题目附件" />
         )}
         <div className="message-bubble">
-          {isUser ? message.content : <MarkdownMessage>{message.content || (message.status === "streaming" ? "正在想一想…" : "")}</MarkdownMessage>}
+          {isUser ? message.content : message.content ? (
+            <MarkdownMessage>{message.content}</MarkdownMessage>
+          ) : message.status === "streaming" ? (
+            <ThinkingIndicator imageReview={message.imageReview} progressText={message.progressText} />
+          ) : null}
           {message.status === "streaming" && message.content && <span className="typing-cursor" />}
           {message.status === "interrupted" && <span className="message-state">回答已停止</span>}
         </div>
@@ -638,7 +665,14 @@ export default function App() {
         attachment: outgoingImage ? { preview: outgoingImage.dataUrl } : null,
       };
       const assistantId = `local-assistant-${Date.now()}`;
-      setMessages((current) => [...current, userMessage, { id: assistantId, role: "assistant", content: "", status: "streaming" }]);
+      setMessages((current) => [...current, userMessage, {
+        id: assistantId,
+        role: "assistant",
+        content: "",
+        status: "streaming",
+        imageReview: Boolean(outgoingImage) && mode === "review",
+        progressText: "",
+      }]);
 
       const controller = new AbortController();
       abortRef.current = controller;
@@ -666,6 +700,8 @@ export default function App() {
         for (const event of parsed.events) {
           if (event.type === "delta") {
             setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, content: item.content + event.text } : item));
+          } else if (event.type === "status") {
+            setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, progressText: event.message || item.progressText } : item));
           } else if (event.type === "done") {
             doneEvent = true;
             setMessages((current) => current.map((item) => item.id === assistantId ? { ...item, id: event.messageId, status: "completed" } : item));
