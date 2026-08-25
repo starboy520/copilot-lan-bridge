@@ -18,6 +18,10 @@ DEFAULT_SETTINGS = {
     "reasoning_effort": "medium",
 }
 
+DEFAULT_PROFILE_ID = "default"
+DEFAULT_PROFILE_NAME = "孩子"
+MAX_PROFILES = 8
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -51,11 +55,18 @@ class StudyStore:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(
                 """
+                CREATE TABLE IF NOT EXISTS profiles (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS sessions (
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS attachments (
                     id TEXT PRIMARY KEY,
@@ -77,28 +88,135 @@ class StudyStore:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS profile_settings (
+                    profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                    key TEXT NOT NULL,
+                    value TEXT NOT NULL,
+                    PRIMARY KEY(profile_id, key)
+                );
                 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, id);
                 """
             )
+            session_columns = {row["name"] for row in db.execute("PRAGMA table_info(sessions)")}
+            if "profile_id" not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE")
+
+            now = utc_now()
+            if db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] == 0:
+                db.execute(
+                    "INSERT INTO profiles(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    (DEFAULT_PROFILE_ID, DEFAULT_PROFILE_NAME, now, now),
+                )
+            default_profile = db.execute("SELECT id FROM profiles ORDER BY created_at, id LIMIT 1").fetchone()[0]
+            db.execute("UPDATE sessions SET profile_id=? WHERE profile_id IS NULL", (default_profile,))
+            db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_profile ON sessions(profile_id, updated_at DESC)")
+
             for key, value in {**DEFAULT_SETTINGS, "model": self.default_model}.items():
                 db.execute("INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value))
 
-    def create_session(self) -> dict[str, Any]:
+            legacy = {row["key"]: row["value"] for row in db.execute("SELECT key, value FROM settings")}
+            for profile in db.execute("SELECT id FROM profiles").fetchall():
+                for key, fallback in {**DEFAULT_SETTINGS, "model": self.default_model}.items():
+                    db.execute(
+                        "INSERT OR IGNORE INTO profile_settings(profile_id, key, value) VALUES (?, ?, ?)",
+                        (profile["id"], key, legacy.get(key, fallback)),
+                    )
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT p.id, p.name, p.created_at, p.updated_at, COUNT(s.id) AS session_count
+                   FROM profiles p LEFT JOIN sessions s ON s.profile_id=p.id
+                   GROUP BY p.id ORDER BY p.created_at, p.id"""
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "sessionCount": row["session_count"],
+                "createdAt": row["created_at"],
+                "updatedAt": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def profile_exists(self, profile_id: str) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM profiles WHERE id=?", (profile_id,)).fetchone() is not None
+
+    def create_profile(self, name: str) -> dict[str, Any]:
+        profile_id = str(uuid.uuid4())
+        now = utc_now()
+        with self.connect() as db:
+            if db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] >= MAX_PROFILES:
+                raise ValueError(f"最多可以创建 {MAX_PROFILES} 个孩子档案。")
+            try:
+                db.execute(
+                    "INSERT INTO profiles(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                    (profile_id, name, now, now),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("档案名称已经存在。") from error
+            for key, value in {**DEFAULT_SETTINGS, "model": self.default_model}.items():
+                db.execute(
+                    "INSERT INTO profile_settings(profile_id, key, value) VALUES (?, ?, ?)",
+                    (profile_id, key, value),
+                )
+        return {"id": profile_id, "name": name, "sessionCount": 0, "createdAt": now, "updatedAt": now}
+
+    def rename_profile(self, profile_id: str, name: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self.connect() as db:
+            try:
+                changed = db.execute(
+                    "UPDATE profiles SET name=?, updated_at=? WHERE id=?", (name, now, profile_id)
+                ).rowcount
+            except sqlite3.IntegrityError as error:
+                raise ValueError("档案名称已经存在。") from error
+        if not changed:
+            return None
+        return next(profile for profile in self.list_profiles() if profile["id"] == profile_id)
+
+    def delete_profile(self, profile_id: str) -> bool:
+        with self.connect() as db:
+            if db.execute("SELECT COUNT(*) FROM profiles").fetchone()[0] <= 1:
+                raise ValueError("至少需要保留一个孩子档案。")
+            paths = [
+                Path(row[0])
+                for row in db.execute(
+                    """SELECT a.storage_path FROM attachments a JOIN messages m ON m.attachment_id=a.id
+                       JOIN sessions s ON s.id=m.session_id WHERE s.profile_id=?""",
+                    (profile_id,),
+                ).fetchall()
+            ]
+            deleted = db.execute("DELETE FROM profiles WHERE id=?", (profile_id,)).rowcount > 0
+            db.execute(
+                "DELETE FROM attachments WHERE id NOT IN (SELECT attachment_id FROM messages WHERE attachment_id IS NOT NULL)"
+            )
+        if deleted:
+            for path in paths:
+                path.unlink(missing_ok=True)
+        return deleted
+
+    def create_session(self, profile_id: str) -> dict[str, Any]:
+        if not self.profile_exists(profile_id):
+            raise ValueError("孩子档案不存在。")
         session_id = str(uuid.uuid4())
         now = utc_now()
         with self.connect() as db:
             db.execute(
-                "INSERT INTO sessions(id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                (session_id, "新对话", now, now),
+                "INSERT INTO sessions(id, title, created_at, updated_at, profile_id) VALUES (?, ?, ?, ?, ?)",
+                (session_id, "新对话", now, now, profile_id),
             )
-        return {"id": session_id, "title": "新对话", "createdAt": now, "updatedAt": now}
+        return {"id": session_id, "title": "新对话", "createdAt": now, "updatedAt": now, "profileId": profile_id}
 
-    def list_sessions(self) -> list[dict[str, Any]]:
+    def list_sessions(self, profile_id: str) -> list[dict[str, Any]]:
         with self.connect() as db:
             rows = db.execute(
                 """SELECT s.id, s.title, s.created_at, s.updated_at,
                           (SELECT content FROM messages m WHERE m.session_id=s.id ORDER BY m.id DESC LIMIT 1) AS preview
-                   FROM sessions s ORDER BY s.updated_at DESC LIMIT 100"""
+                   FROM sessions s WHERE s.profile_id=? ORDER BY s.updated_at DESC LIMIT 100""",
+                (profile_id,),
             ).fetchall()
         return [
             {
@@ -115,6 +233,11 @@ class StudyStore:
         with self.connect() as db:
             return db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone() is not None
 
+    def session_profile_id(self, session_id: str) -> str | None:
+        with self.connect() as db:
+            row = db.execute("SELECT profile_id FROM sessions WHERE id=?", (session_id,)).fetchone()
+        return row["profile_id"] if row else None
+
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self.connect() as db:
             session = db.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
@@ -129,6 +252,7 @@ class StudyStore:
             ).fetchall()
         return {
             "id": session["id"],
+            "profileId": session["profile_id"],
             "title": session["title"],
             "createdAt": session["created_at"],
             "updatedAt": session["updated_at"],
@@ -217,12 +341,20 @@ class StudyStore:
             Path(row["storage_path"]).unlink(missing_ok=True)
         return deleted
 
-    def clear_all(self) -> None:
+    def clear_profile(self, profile_id: str) -> None:
         with self.connect() as db:
-            paths = [Path(row[0]) for row in db.execute("SELECT storage_path FROM attachments").fetchall()]
-            db.execute("DELETE FROM messages")
-            db.execute("DELETE FROM sessions")
-            db.execute("DELETE FROM attachments")
+            paths = [
+                Path(row[0])
+                for row in db.execute(
+                    """SELECT a.storage_path FROM attachments a JOIN messages m ON m.attachment_id=a.id
+                       JOIN sessions s ON s.id=m.session_id WHERE s.profile_id=?""",
+                    (profile_id,),
+                ).fetchall()
+            ]
+            db.execute("DELETE FROM sessions WHERE profile_id=?", (profile_id,))
+            db.execute(
+                "DELETE FROM attachments WHERE id NOT IN (SELECT attachment_id FROM messages WHERE attachment_id IS NOT NULL)"
+            )
         for path in paths:
             path.unlink(missing_ok=True)
 
@@ -239,20 +371,25 @@ class StudyStore:
             Path(row["storage_path"]).unlink(missing_ok=True)
         return len(rows)
 
-    def get_settings(self) -> dict[str, Any]:
+    def get_settings(self, profile_id: str) -> dict[str, Any]:
         with self.connect() as db:
-            pairs = {row["key"]: row["value"] for row in db.execute("SELECT key, value FROM settings")}
+            pairs = {
+                row["key"]: row["value"]
+                for row in db.execute("SELECT key, value FROM profile_settings WHERE profile_id=?", (profile_id,))
+            }
+            pin_set = db.execute("SELECT 1 FROM settings WHERE key='pin_hash'").fetchone() is not None
         return {
             "gradeLevel": pairs.get("grade_level", "junior"),
             "responseStyle": pairs.get("response_style", "concise"),
             "learningMode": pairs.get("learning_mode", "guide"),
             "reasoningEffort": pairs.get("reasoning_effort", "medium"),
             "model": pairs.get("model", self.default_model),
-            "pinSet": bool(pairs.get("pin_hash")),
+            "pinSet": pin_set,
         }
 
     def update_settings(
         self,
+        profile_id: str,
         grade_level: str,
         response_style: str,
         learning_mode: str,
@@ -269,8 +406,9 @@ class StudyStore:
         with self.connect() as db:
             for key, value in values.items():
                 db.execute(
-                    "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                    (key, value),
+                    """INSERT INTO profile_settings(profile_id, key, value) VALUES (?, ?, ?)
+                       ON CONFLICT(profile_id, key) DO UPDATE SET value=excluded.value""",
+                    (profile_id, key, value),
                 )
 
     def set_pin(self, pin: str) -> None:
@@ -296,4 +434,5 @@ class StudyStore:
             return False
 
     def pin_is_set(self) -> bool:
-        return bool(self.get_settings()["pinSet"])
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM settings WHERE key='pin_hash'").fetchone() is not None

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import http.client
 import json
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -23,7 +24,8 @@ class StorageTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_session_messages_and_delete(self) -> None:
-        session = self.store.create_session()
+        profile_id = self.store.list_profiles()[0]["id"]
+        session = self.store.create_session(profile_id)
         self.store.add_message(session["id"], "user", "什么是质数？")
         self.store.add_message(session["id"], "assistant", "质数只有两个正因数。")
         loaded = self.store.get_session(session["id"])
@@ -40,15 +42,55 @@ class StorageTests(unittest.TestCase):
         self.assertFalse(self.store.verify_pin("0000"))
 
     def test_reasoning_effort_setting(self) -> None:
-        self.assertEqual("medium", self.store.get_settings()["reasoningEffort"])
-        self.store.update_settings("junior", "concise", "guide", "high", "gpt-5.6-sol")
-        self.assertEqual("high", self.store.get_settings()["reasoningEffort"])
-        self.assertEqual("gpt-5.6-sol", self.store.get_settings()["model"])
+        profile_id = self.store.list_profiles()[0]["id"]
+        self.assertEqual("medium", self.store.get_settings(profile_id)["reasoningEffort"])
+        self.store.update_settings(profile_id, "junior", "concise", "guide", "high", "gpt-5.6-sol")
+        self.assertEqual("high", self.store.get_settings(profile_id)["reasoningEffort"])
+        self.assertEqual("gpt-5.6-sol", self.store.get_settings(profile_id)["model"])
 
     def test_custom_default_model_for_new_deployment(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             store = StudyStore(Path(temp), default_model="deployment-model")
-            self.assertEqual("deployment-model", store.get_settings()["model"])
+            profile_id = store.list_profiles()[0]["id"]
+            self.assertEqual("deployment-model", store.get_settings(profile_id)["model"])
+
+    def test_profiles_isolate_sessions_and_settings(self) -> None:
+        first_id = self.store.list_profiles()[0]["id"]
+        second = self.store.create_profile("小明")
+        first_session = self.store.create_session(first_id)
+        second_session = self.store.create_session(second["id"])
+        self.store.update_settings(second["id"], "primary", "detailed", "direct", "low", "gpt-5.6-sol")
+        self.assertEqual(1, len(self.store.list_sessions(first_id)))
+        self.assertEqual(1, len(self.store.list_sessions(second["id"])))
+        self.assertEqual("junior", self.store.get_settings(first_id)["gradeLevel"])
+        self.assertEqual("primary", self.store.get_settings(second["id"])["gradeLevel"])
+        self.assertTrue(self.store.delete_profile(second["id"]))
+        self.assertIsNotNone(self.store.get_session(first_session["id"]))
+        self.assertIsNone(self.store.get_session(second_session["id"]))
+
+    def test_existing_database_is_migrated_to_default_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            db_path = root / "study-agent.db"
+            db = sqlite3.connect(db_path)
+            try:
+                db.executescript(
+                    """
+                    CREATE TABLE sessions (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                    CREATE TABLE attachments (id TEXT PRIMARY KEY, storage_path TEXT NOT NULL, mime_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL);
+                    CREATE TABLE messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, role TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL, attachment_id TEXT REFERENCES attachments(id), created_at TEXT NOT NULL);
+                    CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                    INSERT INTO sessions VALUES ('old-session', '旧对话', '2026-01-01', '2026-01-01');
+                    INSERT INTO settings VALUES ('grade_level', 'senior');
+                    """
+                )
+                db.commit()
+            finally:
+                db.close()
+            migrated = StudyStore(root)
+            profile_id = migrated.list_profiles()[0]["id"]
+            self.assertEqual("old-session", migrated.list_sessions(profile_id)[0]["id"])
+            self.assertEqual("senior", migrated.get_settings(profile_id)["gradeLevel"])
 
     def test_old_attachment_cleanup(self) -> None:
         raw = b"\x89PNG\r\n\x1a\ncontent"
@@ -96,6 +138,50 @@ class PromptTests(unittest.TestCase):
 
 
 class HttpProtocolTests(unittest.TestCase):
+    def test_profile_crud_requires_parent_pin(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            web = root / "web"
+            web.mkdir()
+            (web / "index.html").write_text("ok", encoding="utf-8")
+            server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
+            server.store.set_pin("1234")
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+
+            def request(method: str, path: str, payload: dict | None = None) -> tuple[int, dict | list]:
+                connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+                try:
+                    body = json.dumps(payload) if payload is not None else None
+                    headers = {"Content-Type": "application/json"} if body is not None else {}
+                    connection.request(method, path, body=body, headers=headers)
+                    response = connection.getresponse()
+                    return response.status, json.loads(response.read())
+                finally:
+                    connection.close()
+
+            try:
+                status, _ = request("POST", "/api/profiles", {"name": "小明", "pin": "0000"})
+                self.assertEqual(403, status)
+
+                status, profile = request("POST", "/api/profiles", {"name": "小明", "pin": "1234"})
+                self.assertEqual(201, status)
+                profile_id = profile["id"]
+
+                status, renamed = request(
+                    "PUT", f"/api/profiles/{profile_id}", {"name": "小明同学", "pin": "1234"}
+                )
+                self.assertEqual(200, status)
+                self.assertEqual("小明同学", renamed["name"])
+
+                status, _ = request("DELETE", f"/api/profiles/{profile_id}", {"pin": "1234"})
+                self.assertEqual(200, status)
+                self.assertEqual(1, len(server.store.list_profiles()))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
     def test_create_session_consumes_body_on_persistent_connection(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -107,11 +193,13 @@ class HttpProtocolTests(unittest.TestCase):
             thread.start()
             connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
             try:
-                connection.request("POST", "/api/sessions", body="{}", headers={"Content-Type": "application/json"})
+                profile_id = server.store.list_profiles()[0]["id"]
+                body = json.dumps({"profileId": profile_id})
+                connection.request("POST", "/api/sessions", body=body, headers={"Content-Type": "application/json"})
                 first = connection.getresponse()
                 self.assertEqual(201, first.status)
                 first.read()
-                connection.request("GET", "/api/sessions")
+                connection.request("GET", f"/api/sessions?profileId={profile_id}")
                 response = connection.getresponse()
                 self.assertEqual(200, response.status)
                 self.assertEqual(1, len(json.loads(response.read())))
@@ -151,7 +239,13 @@ class HttpProtocolTests(unittest.TestCase):
             thread.start()
             try:
                 connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
-                connection.request("POST", "/api/sessions", body="{}", headers={"Content-Type": "application/json"})
+                profile_id = server.store.list_profiles()[0]["id"]
+                connection.request(
+                    "POST",
+                    "/api/sessions",
+                    body=json.dumps({"profileId": profile_id}),
+                    headers={"Content-Type": "application/json"},
+                )
                 session = json.loads(connection.getresponse().read())
                 connection.close()
 

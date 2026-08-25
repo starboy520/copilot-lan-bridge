@@ -14,12 +14,14 @@ import {
   Lightbulb,
   Menu,
   MessageCircleQuestion,
+  Pencil,
   Plus,
   RotateCcw,
   Send,
   Settings,
   Sparkles,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { takeNdjsonLines } from "./stream.js";
@@ -104,7 +106,7 @@ function MarkdownMessage({ children }) {
   );
 }
 
-function Sidebar({ open, sessions, activeId, onSelect, onNew, onDelete, onSettings, onClose }) {
+function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onDelete, onSettings, onClose }) {
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="关闭会话列表" onClick={onClose} />}
@@ -113,6 +115,15 @@ function Sidebar({ open, sessions, activeId, onSelect, onNew, onDelete, onSettin
           <div className="brand-mark"><MessageCircleQuestion size={22} /></div>
           <div><strong>小问号</strong><span>学习助手</span></div>
           <button className="icon-button sidebar-close" onClick={onClose} aria-label="关闭"><X size={20} /></button>
+        </div>
+        <div className="profile-picker">
+          <label htmlFor="profile-select">当前孩子</label>
+          <div>
+            <select id="profile-select" value={activeProfileId || ""} onChange={(event) => onProfileChange(event.target.value)}>
+              {profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+            </select>
+            <button className="icon-button" onClick={onManageProfiles} title="管理孩子档案" aria-label="管理孩子档案"><UserRound size={18} /></button>
+          </div>
         </div>
         <button className="new-chat-button" onClick={onNew}><Plus size={18} />新对话</button>
         <div className="section-label">最近对话</div>
@@ -262,7 +273,75 @@ function Composer({ value, setValue, image, setImage, mode, setMode, loading, on
   );
 }
 
-function SettingsModal({ settings, models, onClose, onSaved, onClear }) {
+function ProfileModal({ profiles, activeProfileId, pinSet, onClose, onCreated, onRenamed, onDeleted }) {
+  const [name, setName] = useState("");
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function createProfile() {
+    setSaving(true);
+    setError("");
+    try {
+      const profile = await api("/api/profiles", { method: "POST", body: JSON.stringify({ name, pin }) });
+      setName("");
+      await onCreated(profile);
+    } catch (reason) {
+      setError(reason.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function renameProfile(profile) {
+    const nextName = window.prompt("请输入新的档案名称：", profile.name)?.trim();
+    if (!nextName || nextName === profile.name) return;
+    setError("");
+    try {
+      const updated = await api(`/api/profiles/${profile.id}`, { method: "PUT", body: JSON.stringify({ name: nextName, pin }) });
+      onRenamed(updated);
+    } catch (reason) {
+      setError(reason.message);
+    }
+  }
+
+  async function deleteProfile(profile) {
+    if (!window.confirm(`删除“${profile.name}”档案及其全部聊天和图片？此操作不能恢复。`)) return;
+    setError("");
+    try {
+      await api(`/api/profiles/${profile.id}`, { method: "DELETE", body: JSON.stringify({ pin }) });
+      await onDeleted(profile.id);
+    } catch (reason) {
+      setError(reason.message);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal" role="dialog" aria-modal="true" aria-labelledby="profiles-title">
+        <header><div><span className="eyebrow">家庭学习</span><h2 id="profiles-title">孩子档案</h2></div><button className="icon-button" onClick={onClose}><X size={20} /></button></header>
+        <div className="profile-list">
+          {profiles.map((profile) => (
+            <div className={`profile-list-row ${profile.id === activeProfileId ? "active" : ""}`} key={profile.id}>
+              <div><strong>{profile.name}</strong><span>{profile.sessionCount} 个对话{profile.id === activeProfileId ? " · 当前" : ""}</span></div>
+              <div>
+                <button className="icon-button" onClick={() => renameProfile(profile)} aria-label={`重命名${profile.name}`}><Pencil size={16} /></button>
+                <button className="icon-button danger-icon" disabled={profiles.length <= 1} onClick={() => deleteProfile(profile)} aria-label={`删除${profile.name}`}><Trash2 size={16} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <label>新增孩子<input value={name} maxLength="20" onChange={(event) => setName(event.target.value)} placeholder="名字或昵称" /></label>
+        {pinSet && <label>家长 PIN<input type="password" inputMode="numeric" value={pin} onChange={(event) => setPin(event.target.value)} placeholder="新增、修改或删除档案时需要" /></label>}
+        {error && <p className="modal-error">{error}</p>}
+        <div className="privacy-note">每个孩子拥有独立的聊天记录和学习设置，家长 PIN 由全家共用。</div>
+        <div className="modal-actions profile-actions"><button className="secondary" onClick={onClose}>完成</button><button className="primary" disabled={saving || !name.trim() || profiles.length >= 8} onClick={createProfile}>{saving ? "创建中…" : "新增档案"}</button></div>
+      </section>
+    </div>
+  );
+}
+
+function SettingsModal({ profile, settings, models, onClose, onSaved, onClear }) {
   const [form, setForm] = useState(settings);
   const [currentPin, setCurrentPin] = useState("");
   const [newPin, setNewPin] = useState("");
@@ -275,7 +354,7 @@ function SettingsModal({ settings, models, onClose, onSaved, onClear }) {
     try {
       const updated = await api("/api/settings", {
         method: "PUT",
-        body: JSON.stringify({ ...form, currentPin, newPin }),
+        body: JSON.stringify({ ...form, profileId: profile.id, currentPin, newPin }),
       });
       onSaved(updated);
     } catch (reason) {
@@ -288,7 +367,7 @@ function SettingsModal({ settings, models, onClose, onSaved, onClear }) {
   return (
     <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <header><div><span className="eyebrow">家长设置</span><h2 id="settings-title">调整学习方式</h2></div><button className="icon-button" onClick={onClose}><X size={20} /></button></header>
+        <header><div><span className="eyebrow">{profile.name}的设置</span><h2 id="settings-title">调整学习方式</h2></div><button className="icon-button" onClick={onClose}><X size={20} /></button></header>
         <label>学段<select value={form.gradeLevel} onChange={(e) => setForm({ ...form, gradeLevel: e.target.value })}><option value="primary">小学</option><option value="junior">初中</option><option value="senior">高中</option></select></label>
         <label>回答风格<select value={form.responseStyle} onChange={(e) => setForm({ ...form, responseStyle: e.target.value })}><option value="concise">简洁</option><option value="detailed">详细</option></select></label>
         <label>默认学习模式<select value={form.learningMode} onChange={(e) => setForm({ ...form, learningMode: e.target.value })}><option value="guide">先提示，再讲答案</option><option value="direct">直接分步骤讲解</option></select></label>
@@ -299,7 +378,7 @@ function SettingsModal({ settings, models, onClose, onSaved, onClear }) {
         {error && <p className="modal-error">{error}</p>}
         <div className="privacy-note">聊天和题目图片保存在这台电脑上。当前版本不会主动联网搜索。</div>
         <div className="modal-actions">
-          <button className="danger-text" onClick={() => onClear(currentPin)}>清除全部记录</button>
+          <button className="danger-text" onClick={() => onClear(currentPin)}>清除{profile.name}的记录</button>
           <div><button className="secondary" onClick={onClose}>取消</button><button className="primary" disabled={saving} onClick={save}>{saving ? "保存中…" : "保存设置"}</button></div>
         </div>
       </section>
@@ -308,6 +387,8 @@ function SettingsModal({ settings, models, onClose, onSaved, onClear }) {
 }
 
 export default function App() {
+  const [profiles, setProfiles] = useState([]);
+  const [activeProfileId, setActiveProfileId] = useState(null);
   const [sessions, setSessions] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -317,6 +398,7 @@ export default function App() {
   const [settings, setSettings] = useState({ gradeLevel: "junior", responseStyle: "concise", learningMode: "guide", reasoningEffort: "medium", model: "gpt-5.6-sol", pinSet: false });
   const [models, setModels] = useState(["gpt-5.6-sol"]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showProfiles, setShowProfiles] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
@@ -324,6 +406,7 @@ export default function App() {
   const [bridgeOnline, setBridgeOnline] = useState(true);
   const abortRef = useRef(null);
   const bottomRef = useRef(null);
+  const activeProfile = profiles.find((profile) => profile.id === activeProfileId) || profiles[0] || null;
 
   const lastAssistantIndex = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index].role === "assistant") return index;
@@ -331,8 +414,17 @@ export default function App() {
   }, [messages]);
 
   useEffect(() => {
-    Promise.all([api("/api/sessions"), api("/api/settings"), api("/api/health"), api("/api/models")])
-      .then(([sessionData, settingData, health, modelData]) => {
+    Promise.all([api("/api/profiles"), api("/api/health"), api("/api/models")])
+      .then(async ([profileData, health, modelData]) => {
+        const savedId = window.localStorage.getItem("study-agent-profile-id");
+        const selected = profileData.find((profile) => profile.id === savedId) || profileData[0];
+        if (!selected) throw new Error("没有可用的孩子档案。");
+        const [sessionData, settingData] = await Promise.all([
+          api(`/api/sessions?profileId=${encodeURIComponent(selected.id)}`),
+          api(`/api/settings?profileId=${encodeURIComponent(selected.id)}`),
+        ]);
+        setProfiles(profileData);
+        setActiveProfileId(selected.id);
         setSessions(sessionData);
         setSettings(settingData);
         setMode(settingData.learningMode);
@@ -347,8 +439,31 @@ export default function App() {
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: loading ? "auto" : "smooth" }); }, [messages, loading]);
 
   async function refreshSessions() {
-    const data = await api("/api/sessions");
+    if (!activeProfileId) return;
+    const data = await api(`/api/sessions?profileId=${encodeURIComponent(activeProfileId)}`);
     setSessions(data);
+    setProfiles((current) => current.map((profile) => (
+      profile.id === activeProfileId ? { ...profile, sessionCount: data.length } : profile
+    )));
+  }
+
+  async function loadProfile(profileId) {
+    if (loading || profileId === activeProfileId) return;
+    setError("");
+    const [sessionData, settingData] = await Promise.all([
+      api(`/api/sessions?profileId=${encodeURIComponent(profileId)}`),
+      api(`/api/settings?profileId=${encodeURIComponent(profileId)}`),
+    ]);
+    window.localStorage.setItem("study-agent-profile-id", profileId);
+    setActiveProfileId(profileId);
+    setSessions(sessionData);
+    setSettings(settingData);
+    setMode(settingData.learningMode);
+    setActiveId(null);
+    setMessages([]);
+    setText("");
+    setImage(null);
+    setSidebarOpen(false);
   }
 
   async function newChat() {
@@ -388,9 +503,9 @@ export default function App() {
   }
 
   async function clearAll(pin) {
-    if (!window.confirm("确定清除全部聊天记录和题目图片？此操作不能恢复。")) return;
+    if (!window.confirm(`确定清除${activeProfile?.name || "当前档案"}的全部聊天记录和题目图片？此操作不能恢复。`)) return;
     try {
-      await api("/api/data", { method: "DELETE", body: JSON.stringify({ pin }) });
+      await api("/api/data", { method: "DELETE", body: JSON.stringify({ pin, profileId: activeProfileId }) });
       setShowSettings(false);
       await newChat();
       await refreshSessions();
@@ -411,7 +526,7 @@ export default function App() {
     let sessionId = activeId;
     try {
       if (!sessionId) {
-        const session = await api("/api/sessions", { method: "POST", body: "{}" });
+        const session = await api("/api/sessions", { method: "POST", body: JSON.stringify({ profileId: activeProfileId }) });
         sessionId = session.id;
         setActiveId(sessionId);
       }
@@ -478,7 +593,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar open={sidebarOpen} sessions={sessions} activeId={activeId} onSelect={selectSession} onNew={newChat} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onClose={() => setSidebarOpen(false)} />
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button>
@@ -503,7 +618,22 @@ export default function App() {
         <Composer value={text} setValue={setText} image={image} setImage={setImage} mode={mode} setMode={setMode} loading={loading} onSend={() => send()} onStop={() => abortRef.current?.abort()} error={error} setError={setError} />
       </main>
       {showSettings && (
-        <SettingsModal settings={settings} models={models} onClose={() => setShowSettings(false)} onSaved={(updated) => { setSettings(updated); setMode(updated.learningMode); setShowSettings(false); }} onClear={clearAll} />
+        <SettingsModal profile={activeProfile} settings={settings} models={models} onClose={() => setShowSettings(false)} onSaved={(updated) => { setSettings(updated); setMode(updated.learningMode); setShowSettings(false); }} onClear={clearAll} />
+      )}
+      {showProfiles && (
+        <ProfileModal
+          profiles={profiles}
+          activeProfileId={activeProfileId}
+          pinSet={settings.pinSet}
+          onClose={() => setShowProfiles(false)}
+          onCreated={async (profile) => { setProfiles((current) => [...current, profile]); await loadProfile(profile.id); }}
+          onRenamed={(updated) => setProfiles((current) => current.map((profile) => profile.id === updated.id ? updated : profile))}
+          onDeleted={async (profileId) => {
+            const remaining = profiles.filter((profile) => profile.id !== profileId);
+            setProfiles(remaining);
+            if (profileId === activeProfileId) await loadProfile(remaining[0].id);
+          }}
+        />
       )}
     </div>
   );

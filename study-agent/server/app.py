@@ -23,6 +23,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 MAX_JSON_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_BYTES = 3 * 1024 * 1024
 MAX_MESSAGE_CHARS = 10_000
+MAX_PROFILE_NAME_CHARS = 20
 IMAGE_TYPES = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -130,6 +131,28 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _route_parts(self) -> list[str]:
         return [urllib.parse.unquote(part) for part in urllib.parse.urlsplit(self.path).path.split("/") if part]
 
+    def _query_value(self, name: str) -> str:
+        values = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get(name, [])
+        return values[0].strip() if values else ""
+
+    def _require_profile(self, profile_id: str) -> str:
+        if not profile_id or not self.server.store.profile_exists(profile_id):
+            raise ApiError("孩子档案不存在。", 404)
+        return profile_id
+
+    def _verify_parent_pin(self, pin: str) -> None:
+        if self.server.store.pin_is_set() and not self.server.store.verify_pin(pin):
+            raise ApiError("家长 PIN 不正确。", 403)
+
+    @staticmethod
+    def _profile_name(value: Any) -> str:
+        name = " ".join(str(value or "").split())
+        if not name:
+            raise ApiError("请输入孩子的名字或昵称。")
+        if len(name) > MAX_PROFILE_NAME_CHARS:
+            raise ApiError(f"档案名称不能超过 {MAX_PROFILE_NAME_CHARS} 个字符。")
+        return name
+
     def do_GET(self) -> None:
         try:
             parts = self._route_parts()
@@ -149,8 +172,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             if parts == ["api", "chat"]:
                 self._chat()
             elif parts == ["api", "sessions"]:
-                self._read_json()
-                self._json(201, self.server.store.create_session())
+                body = self._read_json()
+                profile_id = self._require_profile(str(body.get("profileId", "")))
+                self._json(201, self.server.store.create_session(profile_id))
+            elif parts == ["api", "profiles"]:
+                body = self._read_json()
+                self._verify_parent_pin(str(body.get("pin", "")))
+                try:
+                    profile = self.server.store.create_profile(self._profile_name(body.get("name")))
+                except ValueError as error:
+                    raise ApiError(str(error)) from error
+                self._json(201, profile)
             else:
                 raise ApiError("接口不存在。", 404)
         except ApiError as error:
@@ -161,12 +193,23 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self) -> None:
         try:
-            if self._route_parts() != ["api", "settings"]:
-                raise ApiError("接口不存在。", 404)
+            parts = self._route_parts()
             body = self._read_json()
+            if len(parts) == 3 and parts[:2] == ["api", "profiles"]:
+                self._verify_parent_pin(str(body.get("pin", "")))
+                try:
+                    profile = self.server.store.rename_profile(parts[2], self._profile_name(body.get("name")))
+                except ValueError as error:
+                    raise ApiError(str(error)) from error
+                if profile is None:
+                    raise ApiError("孩子档案不存在。", 404)
+                self._json(200, profile)
+                return
+            if parts != ["api", "settings"]:
+                raise ApiError("接口不存在。", 404)
+            profile_id = self._require_profile(str(body.get("profileId", "")))
             current_pin = str(body.get("currentPin", ""))
-            if self.server.store.pin_is_set() and not self.server.store.verify_pin(current_pin):
-                raise ApiError("家长 PIN 不正确。", 403)
+            self._verify_parent_pin(current_pin)
             grade = body.get("gradeLevel")
             style = body.get("responseStyle")
             mode = body.get("learningMode")
@@ -191,8 +234,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"\d{4,8}", new_pin):
                     raise ApiError("家长 PIN 必须是 4—8 位数字。")
                 self.server.store.set_pin(new_pin)
-            self.server.store.update_settings(grade, style, mode, reasoning_effort, model)
-            self._json(200, self.server.store.get_settings())
+            self.server.store.update_settings(profile_id, grade, style, mode, reasoning_effort, model)
+            self._json(200, self.server.store.get_settings(profile_id))
         except ApiError as error:
             self._json(error.status, {"error": str(error)})
         except Exception as error:  # pragma: no cover
@@ -204,14 +247,22 @@ class RequestHandler(BaseHTTPRequestHandler):
             parts = self._route_parts()
             body = self._read_json()
             pin = str(body.get("pin", ""))
-            if self.server.store.pin_is_set() and not self.server.store.verify_pin(pin):
-                raise ApiError("家长 PIN 不正确。", 403)
+            self._verify_parent_pin(pin)
             if len(parts) == 3 and parts[:2] == ["api", "sessions"]:
                 if not self.server.store.delete_session(parts[2]):
                     raise ApiError("会话不存在。", 404)
                 self._json(200, {"ok": True})
+            elif len(parts) == 3 and parts[:2] == ["api", "profiles"]:
+                try:
+                    deleted = self.server.store.delete_profile(parts[2])
+                except ValueError as error:
+                    raise ApiError(str(error)) from error
+                if not deleted:
+                    raise ApiError("孩子档案不存在。", 404)
+                self._json(200, {"ok": True})
             elif parts == ["api", "data"]:
-                self.server.store.clear_all()
+                profile_id = self._require_profile(str(body.get("profileId", "")))
+                self.server.store.clear_profile(profile_id)
                 self._json(200, {"ok": True})
             else:
                 raise ApiError("接口不存在。", 404)
@@ -236,15 +287,19 @@ class RequestHandler(BaseHTTPRequestHandler):
             except BridgeError:
                 models = [self.server.bridge.model]
             self._json(200, {"default": self.server.bridge.model, "models": models})
+        elif parts == ["profiles"]:
+            self._json(200, self.server.store.list_profiles())
         elif parts == ["sessions"]:
-            self._json(200, self.server.store.list_sessions())
+            profile_id = self._require_profile(self._query_value("profileId"))
+            self._json(200, self.server.store.list_sessions(profile_id))
         elif len(parts) == 2 and parts[0] == "sessions":
             session = self.server.store.get_session(parts[1])
             if session is None:
                 raise ApiError("会话不存在。", 404)
             self._json(200, session)
         elif parts == ["settings"]:
-            self._json(200, self.server.store.get_settings())
+            profile_id = self._require_profile(self._query_value("profileId"))
+            self._json(200, self.server.store.get_settings(profile_id))
         elif len(parts) == 2 and parts[0] == "attachments":
             attachment = self.server.store.get_attachment(parts[1])
             if attachment is None:
@@ -266,7 +321,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not message and parsed_image is None:
             raise ApiError("请输入问题或选择一张题目图片。")
 
-        settings = self.server.store.get_settings()
+        profile_id = self.server.store.session_profile_id(session_id)
+        if profile_id is None:
+            raise ApiError("会话不存在。", 404)
+        settings = self.server.store.get_settings(profile_id)
         try:
             available_models = self.server.bridge.list_models()
         except BridgeError as error:
