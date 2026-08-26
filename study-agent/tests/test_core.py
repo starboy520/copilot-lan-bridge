@@ -434,5 +434,31 @@ class HttpProtocolTests(unittest.TestCase):
                 thread.join(timeout=2)
 
 
+class StaticCourseTests(unittest.TestCase):
+    def test_markdown_course_file_has_text_content_type(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            web = root / "web"
+            course = web / "curriculum" / "lesson.md"
+            course.parent.mkdir(parents=True)
+            course.write_text("# 第一课\n", encoding="utf-8")
+            server = StudyAgentServer(("127.0.0.1", 0), RequestHandler, root / "data", web)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+            try:
+                connection.request("GET", "/curriculum/lesson.md")
+                response = connection.getresponse()
+                body = response.read().decode("utf-8")
+                self.assertEqual(200, response.status)
+                self.assertEqual("text/markdown; charset=utf-8", response.getheader("Content-Type"))
+                self.assertEqual("# 第一课\n", body.replace("\r\n", "\n"))
+            finally:
+                connection.close()
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=2)
+
+
 if __name__ == "__main__":
     unittest.main()

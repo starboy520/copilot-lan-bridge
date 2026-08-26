@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   CircleStop,
   ImagePlus,
+  Library,
   Lightbulb,
   LockKeyhole,
   LogOut,
@@ -25,6 +26,7 @@ import {
   UserRound,
   X,
 } from "lucide-react";
+import CourseLibrary from "./CourseLibrary.jsx";
 import { takeNdjsonLines } from "./stream.js";
 
 const LEARNING_ACTIONS = [
@@ -173,7 +175,7 @@ function AccessScreen({ mode, onAuthenticated }) {
   );
 }
 
-function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onDelete, onSettings, onLogout, onClose }) {
+function Sidebar({ open, screen, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onOpenCourse, onDelete, onSettings, onLogout, onClose }) {
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="关闭会话列表" onClick={onClose} />}
@@ -193,6 +195,7 @@ function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfil
           </div>
         </div>
         <button className="new-chat-button" onClick={onNew}><Plus size={18} />新对话</button>
+        <button className={`course-nav-button ${screen === "course" ? "active" : ""}`} onClick={onOpenCourse}><Library size={18} />系统课程<span>从零学信奥</span></button>
         <div className="section-label">最近对话</div>
         <nav className="session-list" aria-label="历史会话">
           {sessions.length === 0 && <p className="empty-sessions">开始第一次提问吧</p>}
@@ -217,7 +220,7 @@ function Sidebar({ open, profiles, activeProfileId, sessions, activeId, onProfil
   );
 }
 
-function Welcome({ onStarter }) {
+function Welcome({ onStarter, onOpenCourse }) {
   return (
     <section className="welcome">
       <div className="welcome-icon"><Sparkles size={30} /></div>
@@ -232,6 +235,11 @@ function Welcome({ onStarter }) {
           </button>
         ))}
       </div>
+      <button className="course-starter" onClick={onOpenCourse}>
+        <div><Library size={23} /></div>
+        <span><strong>从零开始学信奥</strong><small>按学校课程顺序学习 C++，包含讲解、练习、项目和复习</small></span>
+        <span className="course-starter-action">进入课程</span>
+      </button>
       <div className="gentle-note">我也可能出错，重要答案记得和课本、老师一起核对。</div>
     </section>
   );
@@ -529,6 +537,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showProfiles, setShowProfiles] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [screen, setScreen] = useState("chat");
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
@@ -619,6 +628,7 @@ export default function App() {
 
   async function newChat() {
     if (loading) return;
+    setScreen("chat");
     setActiveId(null);
     setMessages([]);
     setText("");
@@ -630,6 +640,7 @@ export default function App() {
   async function selectSession(id) {
     if (loading) return;
     try {
+      setScreen("chat");
       const session = await api(`/api/sessions/${id}`);
       setActiveId(id);
       setMessages(session.messages);
@@ -672,6 +683,22 @@ export default function App() {
     setSessions([]);
     setMessages([]);
     setActiveId(null);
+  }
+
+  function openCourse() {
+    if (loading) return;
+    setScreen("course");
+    setSidebarOpen(false);
+    setError("");
+  }
+
+  function askAboutLesson(title) {
+    setScreen("chat");
+    setActiveId(null);
+    setMessages([]);
+    setImage(null);
+    setMode("guide");
+    setText(`我正在学习《${title}》。请先问我哪里不明白，再用适合初一零基础学生的方式提示我。`);
   }
 
   async function send(overrideText) {
@@ -774,7 +801,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar open={sidebarOpen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onLogout={logout} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} screen={screen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onOpenCourse={openCourse} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onLogout={logout} onClose={() => setSidebarOpen(false)} />
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button>
@@ -783,10 +810,12 @@ export default function App() {
           <button className="new-mobile icon-button" onClick={newChat} title="新对话"><Plus size={21} /></button>
         </header>
         <div className="conversation">
-          {booting ? (
+          {screen === "course" ? (
+            <CourseLibrary profileId={activeProfileId} onAskLesson={askAboutLesson} />
+          ) : booting ? (
             <div className="loading-screen"><div className="loading-dot" /><p>正在准备学习空间…</p></div>
           ) : messages.length === 0 ? (
-            <Welcome onStarter={({ text: starterText, mode: starterMode }) => { setMode(starterMode); setText(starterText); }} />
+            <Welcome onOpenCourse={openCourse} onStarter={({ text: starterText, mode: starterMode }) => { setMode(starterMode); setText(starterText); }} />
           ) : (
             <div className="messages">
               {messages.map((message, index) => (
@@ -796,7 +825,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <Composer value={text} setValue={setText} image={image} setImage={setImage} mode={mode} setMode={setMode} loading={loading} onSend={() => send()} onStop={() => abortRef.current?.abort()} error={error} setError={setError} />
+        {screen === "chat" && <Composer value={text} setValue={setText} image={image} setImage={setImage} mode={mode} setMode={setMode} loading={loading} onSend={() => send()} onStop={() => abortRef.current?.abort()} error={error} setError={setError} />}
       </main>
       {showSettings && (
         <SettingsModal profile={activeProfile} settings={settings} models={models} onClose={() => setShowSettings(false)} onSaved={(updated) => { setSettings(updated); setMode(normalizeMode(updated.learningMode)); setShowSettings(false); }} onClear={clearAll} />

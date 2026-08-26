@@ -2,3 +2,5 @@
 Dockerfile text eol=lf
 *.yaml text eol=lf
 *.yml text eol=lf
+*.html text eol=lf
+web/curriculum/** whitespace=-trailing-space,-blank-at-eof

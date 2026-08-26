@@ -6,6 +6,18 @@
 
 首次打开会要求设置一个 8—64 字符的家庭密码。之后每台设备必须登录才能访问聊天、档案、设置和题目图片；连续输错 5 次会暂时锁定。登录后可在“家长与学习设置”中输入两次新密码直接重置，整个应用只使用这一套密码。
 
+## 系统课程
+
+登录后可从侧边栏或首页进入“系统课程”。当前内置《从零开始学信奥》第一部分，按照学校配套视频的顺序学习：
+
+1. 简单程序与 OI
+2. 基础数据类型
+3. 格式化输入和输出
+4. 计数器与累加器
+5. 整数与取余
+
+课程中心直接渲染教程正文，并提供课程目录、上一课／下一课、按孩子档案记录的本地完成进度，以及“就本节提问”入口。教程内容来自独立仓库 [`starboy520/noip-from-zero`](https://github.com/starboy520/noip-from-zero)，以 subtree 快照放在 `public/curriculum/noip-from-zero`，前端构建和 Docker 镜像会自动包含全部课程文件。
+
 如果已经无法登录，可在服务器终端交互式重置家庭密码（密码不会出现在命令历史中）：
 
 ```bash
@@ -134,6 +146,7 @@ curl http://127.0.0.1:8765/api/health
 
 ## 功能与边界
 
+- 支持网站内系统课程、章节导航、分档案学习进度和围绕当前章节提问。
 - 支持流式对话、单张图片、Markdown、LaTeX、C++、历史记录和响应式页面。
 - 支持引导、直接讲解和批改作业模式，以及学段、回答详略、模型和思考深度设置。
 - 批改作业模式可直接上传图片，逐题判断、指出第一处错误并给出订正建议；看不清或缺少作答时会明确提示。
@@ -154,3 +167,16 @@ py -3.10 -m unittest discover -s tests -v
 ```
 
 开发模式可运行 `pnpm dev`；Vite 会把 `/api` 转发到 `127.0.0.1:8765`。
+
+### 同步信奥教程
+
+教程源仓库更新后，在 `copilot-lan-bridge` 仓库根目录执行：
+
+```bash
+git remote add noip-course https://github.com/starboy520/noip-from-zero.git  # 首次执行一次
+git subtree pull --prefix=study-agent/public/curriculum/noip-from-zero noip-course main --squash
+cd study-agent
+pnpm build
+```
+
+如果已经存在 `noip-course` remote，跳过第一条命令。同步后应运行前端测试、构建和后端测试，再提交更新后的 `web/` 成品文件。

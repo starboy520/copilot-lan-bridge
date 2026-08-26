@@ -24,6 +24,7 @@ from .storage import StudyStore
 
 
 APP_ROOT = Path(__file__).resolve().parent.parent
+mimetypes.add_type("text/markdown", ".md")
 MAX_JSON_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_BYTES = 3 * 1024 * 1024
 MAX_MESSAGE_CHARS = 10_000
