@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import rehypeHighlight from "rehype-highlight";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -10,11 +11,11 @@ function storageKey(profileId, suffix) {
   return `study-agent-course-${suffix}-${profileId || "default"}`;
 }
 
-function CourseMarkdown({ children }) {
+export function CourseMarkdown({ children }) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
+      rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: false, plainText: ["text", "plaintext", "txt"] }]]}
       components={{
         a: ({ href, children: label }) => <a href={href} target="_blank" rel="noreferrer">{label}</a>,
         pre: ({ children: content }) => <pre tabIndex="0">{content}</pre>,

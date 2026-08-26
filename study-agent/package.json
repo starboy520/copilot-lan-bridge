@@ -15,6 +15,7 @@
     "react": "latest",
     "react-dom": "latest",
     "react-markdown": "latest",
+    "rehype-highlight": "latest",
     "rehype-katex": "latest",
     "remark-gfm": "latest",
     "remark-math": "latest",
