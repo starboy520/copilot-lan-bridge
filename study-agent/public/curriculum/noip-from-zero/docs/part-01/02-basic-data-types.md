@@ -94,10 +94,8 @@ int students = 48;
 数据可能很大时，使用 `long long`。
 
 ```cpp
-long long population = 8000000000LL;
+long long population = 8000000000;
 ```
-
-这里的 `LL` 表示这个数字按 `long long` 对待。输入时通常不需要写 `LL`。
 
 ### 为什么会溢出
 
@@ -108,7 +106,7 @@ long long population = 8000000000LL;
 ```cpp
 long long a, b;
 cin >> a >> b;
-cout << a * b << '\n';
+cout << a * b << endl;
 ```
 
 ### 选择建议
@@ -138,7 +136,7 @@ int main() {
     double length, width;
     cin >> length >> width;
     double area = length * width;
-    cout << area << '\n';
+    cout << area << endl;
     return 0;
 }
 ```
@@ -151,7 +149,7 @@ int main() {
 
 - 能用整数准确表示时，优先使用整数；
 - 输出小数位数时，使用后面要学习的格式控制；
-- 不要随意用 `==` 判断两个复杂计算得到的小数完全相等。
+- 小数还有一些需要特别注意的比较规则，等学到条件判断时再专门学习。
 
 ---
 
@@ -173,6 +171,32 @@ char letter = 'A';    // 正确：单个字符
 
 `'7'` 是一个字符，不是整数 `7`。它们看起来相似，但用途不同。
 
+### 特殊字符：第一次认识 `\n`
+
+有些字符很难直接写在一对单引号中。例如，“换到下一行”不是键盘上的一个普通字母。C++ 用下面的写法表示它：
+
+```cpp
+char newLine = '\n';
+cout << "第一行" << newLine;
+cout << "第二行" << newLine;
+```
+
+这里的 `\n` 要作为一个整体来看：
+
+- 外面的一对单引号表示“这是一个字符”；
+- 反斜杠 `\` 告诉 C++，后面的字母有特殊含义；
+- `n` 在这里表示换行；
+- 所以 `\n` 不是先输出反斜杠、再输出字母 `n`，而是让输出换到下一行。
+
+我们也可以不准备 `newLine` 变量，直接写：
+
+```cpp
+cout << "第一行" << '\n';
+cout << "第二行" << '\n';
+```
+
+第 1 章使用的 `endl` 也能换行。从现在开始，示例会逐渐改用竞赛程序中更常见的 `\n`。
+
 ---
 
 ## 2.5 字符串类型：`string`
@@ -191,6 +215,8 @@ int main() {
     return 0;
 }
 ```
+
+这里多出了一行 `#include <string>`，它表示取来处理字符串需要的工具。
 
 输入：
 
@@ -325,4 +351,3 @@ cout << x << '\n';
 ---
 
 [← 第 1 章：简单程序与 OI](./01-simple-programs-and-oi.md) · [第一部分目录](./README.md) · [教程首页](../../README.md) · [第 3 章：格式化输入和输出 →](./03-formatted-input-output.md)
-
