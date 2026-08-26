@@ -11,13 +11,13 @@
 ### 练习 1
 
 ```cpp
-cout << "I love C++." << '\n';
+cout << "I love C++." << endl;
 ```
 
 ### 练习 2
 
 ```cpp
-cout << 35 + 27 << '\n';
+cout << 35 + 27 << endl;
 ```
 
 结果为 `62`。
@@ -29,7 +29,7 @@ cout << 35 + 27 << '\n';
 ```cpp
 int length, width;
 cin >> length >> width;
-cout << length * width << '\n';
+cout << length * width << endl;
 ```
 
 ### 练习 4
@@ -37,7 +37,7 @@ cout << length * width << '\n';
 ```cpp
 int a, b;
 cin >> a >> b;
-cout << b << ' ' << a << '\n';
+cout << b << " " << a << endl;
 ```
 
 ## 第 2 章
@@ -163,8 +163,8 @@ cout << ones * 10 + tens << '\n';
 
 ```cpp
 int thousands = n / 1000;
-int hundreds = n / 100 % 10;
-int tens = n / 10 % 10;
+int hundreds = (n / 100) % 10;
+int tens = (n / 10) % 10;
 int ones = n % 10;
 ```
 
@@ -174,7 +174,7 @@ int ones = n % 10;
 
 ```cpp
 int total = h * 60 + m + x;
-int newHour = total / 60 % 24;
+int newHour = (total / 60) % 24;
 int newMinute = total % 60;
 ```
 
@@ -183,4 +183,3 @@ int newMinute = total % 60;
 ---
 
 [← 第一部分复习清单](./07-review-checklist.md) · [第一部分目录](./README.md) · [教程首页](../../README.md) · [给家长或老师的使用建议 →](./09-teaching-guide.md)
-
