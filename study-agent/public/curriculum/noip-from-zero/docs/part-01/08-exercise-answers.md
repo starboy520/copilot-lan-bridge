@@ -10,35 +10,77 @@
 
 ### 练习 1
 
+两处分别填写 `cout` 和 `endl`：
+
 ```cpp
-cout << "I love C++." << endl;
+#include <iostream>
+using namespace std;
+
+int main() {
+    cout << "I can code!" << endl;
+    return 0;
+}
 ```
 
 ### 练习 2
 
 ```cpp
-cout << 35 + 27 << endl;
+#include <iostream>
+using namespace std;
+
+int main() {
+    cout << "I love C++." << endl;
+    return 0;
+}
+```
+
+### 练习 3
+
+```cpp
+#include <iostream>
+using namespace std;
+
+int main() {
+    cout << 35 + 27 << endl;
+    return 0;
+}
 ```
 
 结果为 `62`。
 
-### 练习 3
-
-核心代码：
-
-```cpp
-int length, width;
-cin >> length >> width;
-cout << length * width << endl;
-```
-
 ### 练习 4
 
 ```cpp
-int a, b;
-cin >> a >> b;
-cout << b << " " << a << endl;
+#include <iostream>
+using namespace std;
+
+int main() {
+    int length, width;
+    cin >> length >> width;
+    cout << length * width << endl;
+    return 0;
+}
 ```
+
+### 练习 5
+
+```cpp
+#include <iostream>
+using namespace std;
+
+int main() {
+    int a, b;
+    cin >> a >> b;
+    cout << b << " " << a << endl;
+    return 0;
+}
+```
+
+### 调试实验
+
+1. 故障 1 缺少分号，应把输出语句改为 `cout << "Hello!" << endl;`，否则会出现 CE。
+2. 故障 2 的 `Cout` 大小写错误，应改成 `cout`，否则会出现 CE。
+3. 故障 3 把样例答案 `20` 直接写进了程序。它只会碰巧通过这一组样例，输入 `1 2` 时仍输出 `20`，提交后会得到 WA。正确输出语句是 `cout << a + b << endl;`。
 
 ## 第 2 章
 
