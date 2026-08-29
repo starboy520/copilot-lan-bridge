@@ -198,8 +198,7 @@ cout << fixed << setprecision(1) << average << '\n';
 ### 完整代码
 
 ```cpp
-#include <iostream>
-#include <iomanip>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -258,4 +257,3 @@ x++;
 ---
 
 [← 第 3 章：格式化输入和输出](./03-formatted-input-output.md) · [第一部分目录](./README.md) · [教程首页](../../README.md) · [第 5 章：整数与取余 →](./05-integers-and-modulo.md)
-

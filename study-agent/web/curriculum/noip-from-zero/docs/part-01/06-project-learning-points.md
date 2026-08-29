@@ -62,8 +62,7 @@
 ## 参考程序
 
 ```cpp
-#include <iostream>
-#include <iomanip>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -104,4 +103,3 @@ int main() {
 ---
 
 [← 第 5 章：整数与取余](./05-integers-and-modulo.md) · [第一部分目录](./README.md) · [教程首页](../../README.md) · [第一部分复习清单 →](./07-review-checklist.md)
-
