@@ -4,6 +4,7 @@ import argparse
 import base64
 import binascii
 import getpass
+import hashlib
 import json
 import mimetypes
 import os
@@ -116,6 +117,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.send_header(name, value)
         self.end_headers()
         self.wfile.write(data)
+
+    def _send_not_modified(self, extra_headers: dict[str, str]) -> None:
+        self.send_response(HTTPStatus.NOT_MODIFIED)
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        for name, value in extra_headers.items():
+            self.send_header(name, value)
+        self.end_headers()
 
     def _json(self, status: int, payload: Any, extra_headers: dict[str, str] | None = None) -> None:
         self._send_bytes(
@@ -528,10 +537,21 @@ class RequestHandler(BaseHTTPRequestHandler):
             content_type += "; charset=utf-8"
         relative_candidate = candidate.relative_to(self.server.web_dir)
         is_curriculum = bool(relative_candidate.parts) and relative_candidate.parts[0] == "curriculum"
-        cache = "no-store" if is_curriculum else (
-            "no-cache" if candidate.name == "index.html" else "public, max-age=31536000, immutable"
-        )
-        self._send_bytes(200, candidate.read_bytes(), content_type, {"Cache-Control": cache})
+        data = candidate.read_bytes()
+        if is_curriculum:
+            etag = f'"{hashlib.sha256(data).hexdigest()}"'
+            cache_headers = {"Cache-Control": "no-cache", "ETag": etag}
+            requested_etags = {
+                value.strip() for value in self.headers.get("If-None-Match", "").split(",") if value.strip()
+            }
+            if "*" in requested_etags or etag in requested_etags or f"W/{etag}" in requested_etags:
+                self._send_not_modified(cache_headers)
+                return
+            self._send_bytes(200, data, content_type, cache_headers)
+            return
+
+        cache = "no-cache" if candidate.name == "index.html" else "public, max-age=31536000, immutable"
+        self._send_bytes(200, data, content_type, {"Cache-Control": cache})
 
 
 def main() -> None:

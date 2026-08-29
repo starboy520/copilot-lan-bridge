@@ -435,7 +435,7 @@ class HttpProtocolTests(unittest.TestCase):
 
 
 class StaticCourseTests(unittest.TestCase):
-    def test_markdown_course_file_has_text_content_type(self) -> None:
+    def test_markdown_course_file_uses_etag_revalidation(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             web = root / "web"
@@ -452,8 +452,25 @@ class StaticCourseTests(unittest.TestCase):
                 body = response.read().decode("utf-8")
                 self.assertEqual(200, response.status)
                 self.assertEqual("text/markdown; charset=utf-8", response.getheader("Content-Type"))
-                self.assertEqual("no-store", response.getheader("Cache-Control"))
+                self.assertEqual("no-cache", response.getheader("Cache-Control"))
+                first_etag = response.getheader("ETag")
+                self.assertIsNotNone(first_etag)
                 self.assertEqual("# 第一课\n", body.replace("\r\n", "\n"))
+
+                connection.request("GET", "/curriculum/lesson.md", headers={"If-None-Match": first_etag})
+                response = connection.getresponse()
+                self.assertEqual(304, response.status)
+                self.assertEqual("no-cache", response.getheader("Cache-Control"))
+                self.assertEqual(first_etag, response.getheader("ETag"))
+                self.assertEqual(b"", response.read())
+
+                course.write_text("# 更新后的第一课\n", encoding="utf-8")
+                connection.request("GET", "/curriculum/lesson.md", headers={"If-None-Match": first_etag})
+                response = connection.getresponse()
+                updated_body = response.read().decode("utf-8")
+                self.assertEqual(200, response.status)
+                self.assertNotEqual(first_etag, response.getheader("ETag"))
+                self.assertEqual("# 更新后的第一课\n", updated_body.replace("\r\n", "\n"))
             finally:
                 connection.close()
                 server.shutdown()
