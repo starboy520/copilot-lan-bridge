@@ -526,7 +526,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         if content_type.startswith("text/") or content_type in {"application/javascript", "application/json"}:
             content_type += "; charset=utf-8"
-        cache = "no-cache" if candidate.name == "index.html" else "public, max-age=31536000, immutable"
+        relative_candidate = candidate.relative_to(self.server.web_dir)
+        is_curriculum = bool(relative_candidate.parts) and relative_candidate.parts[0] == "curriculum"
+        cache = "no-store" if is_curriculum else (
+            "no-cache" if candidate.name == "index.html" else "public, max-age=31536000, immutable"
+        )
         self._send_bytes(200, candidate.read_bytes(), content_type, {"Cache-Control": cache})
 
 

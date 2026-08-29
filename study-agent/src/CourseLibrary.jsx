@@ -60,7 +60,11 @@ export default function CourseLibrary({ profileId, onAskLesson }) {
     setLoading(true);
     setError("");
     setMarkdown("");
-    fetch(`${COURSE_ROOT}/${lesson.file}`, { signal: controller.signal, credentials: "same-origin" })
+    fetch(`${COURSE_ROOT}/${lesson.file}`, {
+      signal: controller.signal,
+      credentials: "same-origin",
+      cache: "no-store",
+    })
       .then((response) => {
         if (!response.ok) throw new Error("课程内容暂时无法加载。");
         return response.text();

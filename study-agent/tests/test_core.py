@@ -452,6 +452,7 @@ class StaticCourseTests(unittest.TestCase):
                 body = response.read().decode("utf-8")
                 self.assertEqual(200, response.status)
                 self.assertEqual("text/markdown; charset=utf-8", response.getheader("Content-Type"))
+                self.assertEqual("no-store", response.getheader("Cache-Control"))
                 self.assertEqual("# 第一课\n", body.replace("\r\n", "\n"))
             finally:
                 connection.close()
