@@ -99,7 +99,7 @@ cout << n % 2 << '\n';
 ### 代码
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -232,7 +232,7 @@ cout << hours << ' ' << minutes << ' ' << seconds << '\n';
 ### 完整程序
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {

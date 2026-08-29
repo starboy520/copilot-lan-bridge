@@ -118,11 +118,10 @@ She said, "Hello!"
 
 ## 3.3 按指定小数位数输出
 
-题目经常要求“保留两位小数”。需要使用 `<iomanip>` 工具：
+题目经常要求“保留两位小数”，这会用到格式控制工具。`<bits/stdc++.h>` 已经包含了这些常用工具：
 
 ```cpp
-#include <iostream>
-#include <iomanip>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -233,8 +232,7 @@ cout << 5 / 2.0 << '\n';     // 输出 2.5
 ### 程序
 
 ```cpp
-#include <iostream>
-#include <iomanip>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {

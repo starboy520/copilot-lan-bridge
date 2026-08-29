@@ -9,9 +9,7 @@
 下面是帮助回忆的“语法卡片”，每一行只展示一种写法，不是可以直接复制运行的完整程序。
 
 ```cpp
-#include <iostream>
-#include <iomanip>
-#include <string>
+#include <bits/stdc++.h>
 
 cin >> variable;
 cout << value << '\n';

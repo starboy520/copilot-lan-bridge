@@ -97,7 +97,7 @@ OI 不只是“学会 C++”。
 请亲手输入下面的代码：
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -119,10 +119,20 @@ Hello, OI!
 #### 第 1 行
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 ```
 
-它告诉 C++：我们要使用输入和输出工具。现阶段可以把它理解为“取来输入输出工具箱”。
+它告诉 C++：我们要取来一套常用工具。`bits/stdc++.h` 可以先读作“bits 斜杠 std C++ 点 h”，现阶段把它理解为“常用工具总包”即可。后面要使用的输入、输出、字符串等常用工具，它大多已经包含了。
+
+请留意它的准确写法：
+
+- 最前面是 `#include`；
+- 中间是 `<bits/stdc++.h>`；
+- `bits` 和 `stdc` 都使用小写字母；
+- `c++` 中有两个加号；
+- 最后是 `.h`，这一行末尾不写分号。
+
+`<bits/stdc++.h>` 是学校和信息学竞赛中很常见的简便写法，使用 GCC 编译器的评测环境通常支持它。不过，它不是 C++ 官方标准规定的头文件，某些编程软件可能不支持。如果看到“找不到 `bits/stdc++.h`”一类错误，应先确认学校要求使用的编译器；在不支持它的环境里，可以改为按需要写 `<iostream>`、`<string>` 等具体工具。本教程为了和学校视频保持一致，统一使用 `<bits/stdc++.h>`。
 
 #### 第 2 行
 
@@ -199,7 +209,7 @@ cout << "I am ready!" << endl;
 我们可以直接让 `cout` 输出计算结果：
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -297,7 +307,7 @@ cout << (2 + 3) * 4 << endl;     // 输出 20
 程序如下：
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -411,7 +421,7 @@ cout << "请输入两个整数：";
 #### 故障 1：少了什么符号
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -423,7 +433,7 @@ int main() {
 #### 故障 2：大小写正确吗
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -435,7 +445,7 @@ int main() {
 #### 故障 3：为什么样例通过了，提交仍可能错误
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -471,7 +481,7 @@ int main() {
 把两处横线分别替换成正确内容，让程序输出一行 `I can code!`。
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
