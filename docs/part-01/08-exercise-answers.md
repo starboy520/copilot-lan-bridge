@@ -99,50 +99,93 @@ int main() {
 ### 练习 3
 
 ```cpp
-int money, add, cost;
-cin >> money >> add >> cost;
-cout << money + add - cost << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int money, add, cost;
+    cin >> money >> add >> cost;
+    cout << money + add - cost << '\n';
+    return 0;
+}
 ```
 
 ### 练习 4
 
-使用 `long long` 保存 `distance`、`days` 和计算结果。
+使用 `long long` 保存 `distance`、`days` 和计算结果：
+
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    long long distance, days;
+    cin >> distance >> days;
+    cout << distance * days << '\n';
+    return 0;
+}
+```
 
 ## 第 3 章
 
 ### 练习 1
 
 ```cpp
-int a, b, c;
-cin >> a >> b >> c;
-cout << a << ' ' << b << ' ' << c << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int a, b, c;
+    cin >> a >> b >> c;
+    cout << a << ' ' << b << ' ' << c << '\n';
+    return 0;
+}
 ```
 
 ### 练习 2
 
 ```cpp
-double r;
-cin >> r;
-double circumference = 2 * 3.14159 * r;
-cout << fixed << setprecision(2) << circumference << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    double r;
+    cin >> r;
+    double circumference = 2 * 3.14159 * r;
+    cout << fixed << setprecision(2) << circumference << '\n';
+    return 0;
+}
 ```
 
 ### 练习 3
 
-核心公式：
-
 ```cpp
-double average = (chinese + math + english) / 3.0;
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int chinese, math, english;
+    cin >> chinese >> math >> english;
+    double average = (chinese + math + english) / 3.0;
+    cout << fixed << setprecision(1) << average << '\n';
+    return 0;
+}
 ```
 
 ### 练习 4
 
 ```cpp
-string name;
-int age;
-cin >> name >> age;
-cout << "Name: " << name << '\n';
-cout << "Age: " << age << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    string name;
+    int age;
+    cin >> name >> age;
+    cout << "Name: " << name << '\n';
+    cout << "Age: " << age << '\n';
+    return 0;
+}
 ```
 
 ## 第 4 章
@@ -153,25 +196,70 @@ cout << "Age: " << age << '\n';
 
 ### 练习 2
 
-准备 `int total = 0;`，读入四个整数后依次用 `total += ...` 加入。
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int week1, week2, week3, week4;
+    cin >> week1 >> week2 >> week3 >> week4;
+
+    int total = 0;
+    total += week1;
+    total += week2;
+    total += week3;
+    total += week4;
+
+    cout << total << '\n';
+    return 0;
+}
+```
 
 ### 练习 3
 
 ```cpp
-int day1, day2, day3, day4, day5;
-cin >> day1 >> day2 >> day3 >> day4 >> day5;
+#include <bits/stdc++.h>
+using namespace std;
 
-int total = 0;
-total += day1;
-total += day2;
-total += day3;
-total += day4;
-total += day5;
+int main() {
+    int day1, day2, day3, day4, day5;
+    cin >> day1 >> day2 >> day3 >> day4 >> day5;
+
+    int total = 0;
+    total += day1;
+    total += day2;
+    total += day3;
+    total += day4;
+    total += day5;
+
+    cout << total << '\n';
+    return 0;
+}
 ```
 
 ### 练习 4
 
-总分使用累加器；平均分为 `total / 5.0`。
+```cpp
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int score1, score2, score3, score4, score5;
+    cin >> score1 >> score2 >> score3 >> score4 >> score5;
+
+    int total = 0;
+    total += score1;
+    total += score2;
+    total += score3;
+    total += score4;
+    total += score5;
+
+    double average = total / 5.0;
+    cout << total << '\n';
+    cout << fixed << setprecision(2) << average << '\n';
+    return 0;
+}
+```
 
 ## 第 5 章
 
@@ -182,42 +270,80 @@ total += day5;
 ### 练习 2
 
 ```cpp
-cout << n / 8 << ' ' << n % 8 << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int n;
+    cin >> n;
+    cout << n / 8 << ' ' << n % 8 << '\n';
+    return 0;
+}
 ```
 
 ### 练习 3
 
 ```cpp
-cout << totalMinutes / 60 << ' ' << totalMinutes % 60 << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int totalMinutes;
+    cin >> totalMinutes;
+    cout << totalMinutes / 60 << ' ' << totalMinutes % 60 << '\n';
+    return 0;
+}
 ```
 
 ### 练习 4
 
 ```cpp
-int tens = n / 10;
-int ones = n % 10;
-cout << ones * 10 + tens << '\n';
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int n;
+    cin >> n;
+    int tens = n / 10;
+    int ones = n % 10;
+    cout << ones * 10 + tens << '\n';
+    return 0;
+}
 ```
 
 ### 练习 5
 
-可以依次取出：
-
 ```cpp
-int thousands = n / 1000;
-int hundreds = (n / 100) % 10;
-int tens = (n / 10) % 10;
-int ones = n % 10;
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int n;
+    cin >> n;
+    int thousands = n / 1000;
+    int hundreds = (n / 100) % 10;
+    int tens = (n / 10) % 10;
+    int ones = n % 10;
+    cout << thousands + hundreds + tens + ones << '\n';
+    return 0;
+}
 ```
 
 ### 练习 6
 
-核心思路：
-
 ```cpp
-int total = h * 60 + m + x;
-int newHour = (total / 60) % 24;
-int newMinute = total % 60;
+#include <bits/stdc++.h>
+using namespace std;
+
+int main() {
+    int h, m, x;
+    cin >> h >> m >> x;
+    int total = h * 60 + m + x;
+    int newHour = (total / 60) % 24;
+    int newMinute = total % 60;
+    cout << newHour << ' ' << newMinute << '\n';
+    return 0;
+}
 ```
 
 ---
