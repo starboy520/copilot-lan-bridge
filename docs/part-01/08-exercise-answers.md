@@ -13,7 +13,7 @@
 两处分别填写 `cout` 和 `endl`：
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -25,7 +25,7 @@ int main() {
 ### 练习 2
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -37,7 +37,7 @@ int main() {
 ### 练习 3
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -51,7 +51,7 @@ int main() {
 ### 练习 4
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -65,7 +65,7 @@ int main() {
 ### 练习 5
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {

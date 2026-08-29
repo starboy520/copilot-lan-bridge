@@ -129,7 +129,7 @@ double temperature = 36.5;
 示例：输入长方形的长和宽，计算面积。
 
 ```cpp
-#include <iostream>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -204,8 +204,7 @@ cout << "第二行" << '\n';
 姓名、单词、句子由多个字符组成，可以用 `string` 保存。
 
 ```cpp
-#include <iostream>
-#include <string>
+#include <bits/stdc++.h>
 using namespace std;
 
 int main() {
@@ -216,7 +215,7 @@ int main() {
 }
 ```
 
-这里多出了一行 `#include <string>`，它表示取来处理字符串需要的工具。
+我们使用的 `<bits/stdc++.h>` 已经包含了处理字符串需要的常用工具，所以不需要再单独写 `#include <string>`。
 
 输入：
 
