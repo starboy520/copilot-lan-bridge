@@ -17,6 +17,8 @@ import {
   LogOut,
   Menu,
   MessageCircleQuestion,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RotateCcw,
@@ -176,14 +178,15 @@ function AccessScreen({ mode, onAuthenticated }) {
   );
 }
 
-function Sidebar({ open, screen, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onOpenCourse, onDelete, onSettings, onLogout, onClose }) {
+function Sidebar({ open, collapsed, screen, profiles, activeProfileId, sessions, activeId, onProfileChange, onManageProfiles, onSelect, onNew, onOpenCourse, onDelete, onSettings, onLogout, onClose, onCollapse }) {
   return (
     <>
       {open && <button className="sidebar-backdrop" aria-label="关闭会话列表" onClick={onClose} />}
-      <aside className={`sidebar ${open ? "sidebar-open" : ""}`}>
+      <aside className={`sidebar ${open ? "sidebar-open" : ""} ${collapsed ? "sidebar-collapsed" : ""}`}>
         <div className="brand-row">
           <div className="brand-mark"><MessageCircleQuestion size={22} /></div>
           <div><strong>小问号</strong><span>学习助手</span></div>
+          <button className="icon-button sidebar-collapse" onClick={onCollapse} title="收起侧边栏" aria-label="收起侧边栏"><PanelLeftClose size={19} /></button>
           <button className="icon-button sidebar-close" onClick={onClose} aria-label="关闭"><X size={20} /></button>
         </div>
         <div className="profile-picker">
@@ -538,6 +541,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showProfiles, setShowProfiles] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("study-agent-sidebar-collapsed") === "true");
   const [screen, setScreen] = useState("chat");
   const [loading, setLoading] = useState(false);
   const [booting, setBooting] = useState(true);
@@ -551,6 +555,10 @@ export default function App() {
     for (let index = messages.length - 1; index >= 0; index -= 1) if (messages[index].role === "assistant") return index;
     return -1;
   }, [messages]);
+
+  useEffect(() => {
+    window.localStorage.setItem("study-agent-sidebar-collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     api("/api/auth/status")
@@ -802,10 +810,11 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar open={sidebarOpen} screen={screen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onOpenCourse={openCourse} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onLogout={logout} onClose={() => setSidebarOpen(false)} />
+      <Sidebar open={sidebarOpen} collapsed={sidebarCollapsed} screen={screen} profiles={profiles} activeProfileId={activeProfileId} sessions={sessions} activeId={activeId} onProfileChange={(id) => loadProfile(id).catch((reason) => setError(reason.message))} onManageProfiles={() => setShowProfiles(true)} onSelect={selectSession} onNew={newChat} onOpenCourse={openCourse} onDelete={deleteSession} onSettings={() => setShowSettings(true)} onLogout={logout} onClose={() => setSidebarOpen(false)} onCollapse={() => setSidebarCollapsed(true)} />
       <main className="main-panel">
         <header className="topbar">
           <button className="icon-button menu-button" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button>
+          {sidebarCollapsed && <button className="icon-button sidebar-restore" onClick={() => setSidebarCollapsed(false)} title="展开侧边栏" aria-label="展开侧边栏"><PanelLeftOpen size={20} /></button>}
           <div className="mobile-brand"><MessageCircleQuestion size={19} /><strong>小问号</strong></div>
           <div className={`service-status ${bridgeOnline ? "online" : "offline"}`}><span />{bridgeOnline ? "学习助手在线" : "模型暂时离线"}</div>
           <button className="new-mobile icon-button" onClick={newChat} title="新对话"><Plus size={21} /></button>
