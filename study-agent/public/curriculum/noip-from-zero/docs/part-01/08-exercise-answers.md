@@ -142,8 +142,8 @@ using namespace std;
 
 int main() {
     int a, b, c;
-    cin >> a >> b >> c;
-    cout << a << ' ' << b << ' ' << c << '\n';
+    scanf("%d%d%d", &a, &b, &c);
+    printf("%d %d %d\n", a, b, c);
     return 0;
 }
 ```
@@ -156,9 +156,9 @@ using namespace std;
 
 int main() {
     double r;
-    cin >> r;
+    scanf("%lf", &r);
     double circumference = 2 * 3.14159 * r;
-    cout << fixed << setprecision(2) << circumference << '\n';
+    printf("%.2f\n", circumference);
     return 0;
 }
 ```
@@ -171,9 +171,9 @@ using namespace std;
 
 int main() {
     int chinese, math, english;
-    cin >> chinese >> math >> english;
+    scanf("%d%d%d", &chinese, &math, &english);
     double average = (chinese + math + english) / 3.0;
-    cout << fixed << setprecision(1) << average << '\n';
+    printf("%.1f\n", average);
     return 0;
 }
 ```
@@ -185,11 +185,9 @@ int main() {
 using namespace std;
 
 int main() {
-    string name;
-    int age;
-    cin >> name >> age;
-    cout << "Name: " << name << '\n';
-    cout << "Age: " << age << '\n';
+    int hour, minute;
+    scanf("%d%d", &hour, &minute);
+    printf("%02d:%02d\n", hour, minute);
     return 0;
 }
 ```
@@ -208,7 +206,7 @@ using namespace std;
 
 int main() {
     int week1, week2, week3, week4;
-    cin >> week1 >> week2 >> week3 >> week4;
+    scanf("%d%d%d%d", &week1, &week2, &week3, &week4);
 
     int total = 0;
     total += week1;
@@ -216,7 +214,7 @@ int main() {
     total += week3;
     total += week4;
 
-    cout << total << '\n';
+    printf("%d\n", total);
     return 0;
 }
 ```
@@ -229,7 +227,7 @@ using namespace std;
 
 int main() {
     int day1, day2, day3, day4, day5;
-    cin >> day1 >> day2 >> day3 >> day4 >> day5;
+    scanf("%d%d%d%d%d", &day1, &day2, &day3, &day4, &day5);
 
     int total = 0;
     total += day1;
@@ -238,7 +236,7 @@ int main() {
     total += day4;
     total += day5;
 
-    cout << total << '\n';
+    printf("%d\n", total);
     return 0;
 }
 ```
@@ -251,7 +249,7 @@ using namespace std;
 
 int main() {
     int score1, score2, score3, score4, score5;
-    cin >> score1 >> score2 >> score3 >> score4 >> score5;
+    scanf("%d%d%d%d%d", &score1, &score2, &score3, &score4, &score5);
 
     int total = 0;
     total += score1;
@@ -261,8 +259,8 @@ int main() {
     total += score5;
 
     double average = total / 5.0;
-    cout << total << '\n';
-    cout << fixed << setprecision(2) << average << '\n';
+    printf("%d\n", total);
+    printf("%.2f\n", average);
     return 0;
 }
 ```
@@ -281,8 +279,8 @@ using namespace std;
 
 int main() {
     int n;
-    cin >> n;
-    cout << n / 8 << ' ' << n % 8 << '\n';
+    scanf("%d", &n);
+    printf("%d %d\n", n / 8, n % 8);
     return 0;
 }
 ```
@@ -295,8 +293,8 @@ using namespace std;
 
 int main() {
     int totalMinutes;
-    cin >> totalMinutes;
-    cout << totalMinutes / 60 << ' ' << totalMinutes % 60 << '\n';
+    scanf("%d", &totalMinutes);
+    printf("%d %d\n", totalMinutes / 60, totalMinutes % 60);
     return 0;
 }
 ```
@@ -309,10 +307,10 @@ using namespace std;
 
 int main() {
     int n;
-    cin >> n;
+    scanf("%d", &n);
     int tens = n / 10;
     int ones = n % 10;
-    cout << ones * 10 + tens << '\n';
+    printf("%d\n", ones * 10 + tens);
     return 0;
 }
 ```
@@ -325,12 +323,12 @@ using namespace std;
 
 int main() {
     int n;
-    cin >> n;
+    scanf("%d", &n);
     int thousands = n / 1000;
     int hundreds = (n / 100) % 10;
     int tens = (n / 10) % 10;
     int ones = n % 10;
-    cout << thousands + hundreds + tens + ones << '\n';
+    printf("%d\n", thousands + hundreds + tens + ones);
     return 0;
 }
 ```
@@ -343,11 +341,11 @@ using namespace std;
 
 int main() {
     int h, m, x;
-    cin >> h >> m >> x;
+    scanf("%d%d%d", &h, &m, &x);
     int total = h * 60 + m + x;
     int newHour = (total / 60) % 24;
     int newMinute = total % 60;
-    cout << newHour << ' ' << newMinute << '\n';
+    printf("%d %d\n", newHour, newMinute);
     return 0;
 }
 ```
