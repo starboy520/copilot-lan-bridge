@@ -22,8 +22,8 @@
 C++ 中：
 
 ```cpp
-cout << 17 / 5 << '\n';   // 输出 3
-cout << 17 % 5 << '\n';   // 输出 2
+printf("%d\n", 17 / 5);   // 输出 3
+printf("%d\n", 17 % 5);   // 输出 2
 ```
 
 对非负整数 `a` 和正整数 `b`：
@@ -61,8 +61,8 @@ cout << 17 % 5 << '\n';   // 输出 2
 
 ```cpp
 int n;
-cin >> n;
-cout << n % 2 << '\n';
+scanf("%d", &n);
+printf("%d\n", n % 2);
 ```
 
 输入 `18`，输出 `0`；输入 `13`，输出 `1`。
@@ -106,8 +106,8 @@ using namespace std;
 
 int main() {
     int n, k;
-    cin >> n >> k;
-    cout << n / k << ' ' << n % k << '\n';
+    scanf("%d%d", &n, &k);
+    printf("%d %d\n", n / k, n % k);
     return 0;
 }
 ```
@@ -159,12 +159,12 @@ int main() {
 
 ```cpp
 int totalSeconds;
-cin >> totalSeconds;
+scanf("%d", &totalSeconds);
 
 int minutes = totalSeconds / 60;
 int seconds = totalSeconds % 60;
 
-cout << minutes << ' ' << seconds << '\n';
+printf("%d %d\n", minutes, seconds);
 ```
 
 ### 扩展：转换成时、分、秒
@@ -182,14 +182,14 @@ cout << minutes << ' ' << seconds << '\n';
 
 ```cpp
 int totalSeconds;
-cin >> totalSeconds;
+scanf("%d", &totalSeconds);
 
 int hours = totalSeconds / 3600;
 int remaining = totalSeconds % 3600;
 int minutes = remaining / 60;
 int seconds = remaining % 60;
 
-cout << hours << ' ' << minutes << ' ' << seconds << '\n';
+printf("%d %d %d\n", hours, minutes, seconds);
 ```
 
 ---
@@ -239,13 +239,13 @@ using namespace std;
 
 int main() {
     int n;
-    cin >> n;
+    scanf("%d", &n);
 
     int hundreds = n / 100;
     int tens = (n / 10) % 10;
     int ones = n % 10;
 
-    cout << hundreds << ' ' << tens << ' ' << ones << '\n';
+    printf("%d %d %d\n", hundreds, tens, ones);
     return 0;
 }
 ```

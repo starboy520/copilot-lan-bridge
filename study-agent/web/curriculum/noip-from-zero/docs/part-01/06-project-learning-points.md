@@ -67,7 +67,7 @@ using namespace std;
 
 int main() {
     int day1, day2, day3, day4;
-    cin >> day1 >> day2 >> day3 >> day4;
+    scanf("%d%d%d%d", &day1, &day2, &day3, &day4);
 
     int total = 0;
     total += day1;
@@ -79,10 +79,10 @@ int main() {
     int remaining = total % 10;
     double average = total / 4.0;
 
-    cout << total << '\n';
-    cout << badges << '\n';
-    cout << remaining << '\n';
-    cout << fixed << setprecision(2) << average << '\n';
+    printf("%d\n", total);
+    printf("%d\n", badges);
+    printf("%d\n", remaining);
+    printf("%.2f\n", average);
     return 0;
 }
 ```
