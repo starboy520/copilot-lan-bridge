@@ -26,7 +26,7 @@ int count = 0;
 count = count + 1;
 count = count + 1;
 count = count + 1;
-cout << count << '\n';
+printf("%d\n", count);
 ```
 
 输出：
@@ -84,7 +84,7 @@ int totalSteps = 0;
 totalSteps = totalSteps + 3000;
 totalSteps = totalSteps + 4500;
 totalSteps = totalSteps + 5200;
-cout << totalSteps << '\n';
+printf("%d\n", totalSteps);
 ```
 
 输出：
@@ -181,7 +181,7 @@ int total = 0;
 
 ```cpp
 int day1, day2, day3;
-cin >> day1 >> day2 >> day3;
+scanf("%d%d%d", &day1, &day2, &day3);
 total += day1;
 total += day2;
 total += day3;
@@ -191,8 +191,8 @@ total += day3;
 
 ```cpp
 double average = total / 3.0;
-cout << total << '\n';
-cout << fixed << setprecision(1) << average << '\n';
+printf("%d\n", total);
+printf("%.1f\n", average);
 ```
 
 ### 完整代码
@@ -203,7 +203,7 @@ using namespace std;
 
 int main() {
     int day1, day2, day3;
-    cin >> day1 >> day2 >> day3;
+    scanf("%d%d%d", &day1, &day2, &day3);
 
     int total = 0;
     total += day1;
@@ -211,8 +211,8 @@ int main() {
     total += day3;
 
     double average = total / 3.0;
-    cout << total << '\n';
-    cout << fixed << setprecision(1) << average << '\n';
+    printf("%d\n", total);
+    printf("%.1f\n", average);
     return 0;
 }
 ```
