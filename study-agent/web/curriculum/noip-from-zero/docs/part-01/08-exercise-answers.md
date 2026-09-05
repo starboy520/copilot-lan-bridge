@@ -192,6 +192,25 @@ int main() {
 }
 ```
 
+### `int` 和 `double` 辨析
+
+辨析题的输出是：
+
+```text
+3.0 3.5 3.5
+```
+
+- `a / b` 先进行整数除法，得到 `3`，再放进 `double` 变量成为 `3.0`；
+- `a / 2.0` 中有一个小数，结果是 `3.5`；
+- `static_cast<double>(a) / b` 先临时把 `a` 转换成 `double`，结果也是 `3.5`。
+
+当 `int n = 9;` 时，下面两种方法都能得到 `2.25`：
+
+```cpp
+double answer1 = n / 4.0;
+double answer2 = static_cast<double>(n) / 4;
+```
+
 ## 第 4 章
 
 ### 练习 1
