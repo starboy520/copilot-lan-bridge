@@ -16,6 +16,17 @@
 
 完整入口：[第一部分：走进 C++ 与信息学竞赛](./docs/part-01/README.md)
 
+第二部分“选择结构”也已经完成：
+
+1. [条件与比较运算](./docs/part-02/01-comparisons-and-conditions.md)
+2. [单分支 `if`](./docs/part-02/02-single-if.md)
+3. [双分支 `if...else`](./docs/part-02/03-if-else.md)
+4. [多分支 `if...else if...else`](./docs/part-02/04-multiple-branches.md)
+5. [组合条件与逻辑运算](./docs/part-02/05-logical-operators.md)
+6. [浅层嵌套与边界测试](./docs/part-02/06-nesting-and-boundaries.md)
+
+完整入口：[第二部分：让程序学会做选择](./docs/part-02/README.md)
+
 ## 适合谁
 
 - 初一左右、第一次接触 C++ 的学生
@@ -37,18 +48,31 @@
 
 ```text
 docs/
-└─ part-01/
-   ├─ README.md                      第一部分目录
-   ├─ 00-overview.md                 导读与学习地图
-   ├─ 01-simple-programs-and-oi.md   简单程序与 OI
-   ├─ 02-basic-data-types.md         基础数据类型
-   ├─ 03-formatted-input-output.md   格式化输入和输出
-   ├─ 04-counters-and-accumulators.md 计数器与累加器
-   ├─ 05-integers-and-modulo.md      整数与取余
-   ├─ 06-project-learning-points.md  综合项目
-   ├─ 07-review-checklist.md         复习清单
-   ├─ 08-exercise-answers.md         练习答案
-   └─ 09-teaching-guide.md           家长与教师建议
+├─ part-01/
+│  ├─ README.md                      第一部分目录
+│  ├─ 00-overview.md                 导读与学习地图
+│  ├─ 01-simple-programs-and-oi.md   简单程序与 OI
+│  ├─ 02-basic-data-types.md         基础数据类型
+│  ├─ 03-formatted-input-output.md   格式化输入和输出
+│  ├─ 04-counters-and-accumulators.md 计数器与累加器
+│  ├─ 05-integers-and-modulo.md      整数与取余
+│  ├─ 06-project-learning-points.md  综合项目
+│  ├─ 07-review-checklist.md         复习清单
+│  ├─ 08-exercise-answers.md         练习答案
+│  └─ 09-teaching-guide.md           家长与教师建议
+└─ part-02/
+   ├─ README.md                      第二部分目录
+   ├─ 00-overview.md                 选择结构导读
+   ├─ 01-comparisons-and-conditions.md 条件与比较运算
+   ├─ 02-single-if.md                单分支 if
+   ├─ 03-if-else.md                  双分支 if...else
+   ├─ 04-multiple-branches.md        多分支
+   ├─ 05-logical-operators.md        组合条件与逻辑运算
+   ├─ 06-nesting-and-boundaries.md   浅层嵌套与边界测试
+   ├─ 07-project-challenge-judge.md  综合项目
+   ├─ 08-review-checklist.md         复习清单
+   ├─ 09-exercise-answers.md         练习答案
+   └─ 10-teaching-guide.md           家长与教师建议
 ```
 
 ## 长期路线
@@ -56,7 +80,7 @@ docs/
 教程将逐步扩展为完整的零基础信奥学习路径：
 
 - 第一部分：简单程序、数据与基本运算（已完成）
-- 第二部分：条件判断与分支结构
+- 第二部分：条件判断与分支结构（已完成）
 - 第三部分：循环结构与基础枚举
 - 第四部分：数组、字符串与函数
 - 第五部分：模拟、排序与复杂度

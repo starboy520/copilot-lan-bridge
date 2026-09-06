@@ -99,7 +99,7 @@ export default function CourseLibrary({ profileId, onAskLesson }) {
           <div><span>系统课程</span><strong>从零开始学信奥</strong></div>
         </div>
         <div className="course-progress" aria-label={`学习进度 ${progress}%`}>
-          <div><span>第一部分进度</span><strong>{completedLearning}/{learningLessons.length}</strong></div>
+          <div><span>课程学习进度</span><strong>{completedLearning}/{learningLessons.length}</strong></div>
           <div className="course-progress-track"><i style={{ width: `${progress}%` }} /></div>
         </div>
         <label className="course-mobile-picker">
@@ -125,7 +125,7 @@ export default function CourseLibrary({ profileId, onAskLesson }) {
 
       <div className="course-reader">
         <div className="course-reader-bar">
-          <div><span>第一部分 · 走进 C++ 与信息学竞赛</span><strong>{lesson.shortTitle}</strong></div>
+          <div><span>{lesson.partTitle}</span><strong>{lesson.shortTitle}</strong></div>
           <button className="course-ask-button" onClick={() => onAskLesson(lesson.title)}><CircleHelp size={16} />就本节提问</button>
         </div>
 
