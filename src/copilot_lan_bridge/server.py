@@ -7,9 +7,11 @@ from urllib.parse import urlparse
 
 from aiohttp import ClientError, ClientResponse, ClientSession, ClientTimeout, web
 
+from .chat_requests import ConversionError, responses_to_chat
+from .chat_responses import response_from_chat, stream_from_chat
 from .config import Settings
 from .credentials import CopilotCredential, CredentialError, load_copilot_credential
-from .models import supports_responses, visible_models
+from .models import is_available, supports_responses, visible_models
 from .security import is_authorized
 
 COPILOT_API_VERSION = "2026-06-01"
@@ -92,6 +94,16 @@ class CopilotGateway:
             json=_sanitize_response_body(body),
         )
 
+    async def open_chat_completion(self, body: dict[str, Any], accept: str) -> ClientResponse:
+        if self.session is None:
+            raise RuntimeError("Copilot gateway has not started.")
+        credential = self._credential()
+        return await self.session.post(
+            f"{_copilot_base_url(credential)}/chat/completions",
+            headers=_upstream_headers(credential, accept=accept),
+            json=body,
+        )
+
 
 SETTINGS_KEY = web.AppKey("settings", Settings)
 GATEWAY_KEY = web.AppKey("gateway", CopilotGateway)
@@ -141,15 +153,27 @@ async def create_response(request: web.Request) -> web.StreamResponse:
         model = next((item for item in models if item.get("id") == model_id), None)
         if model is None:
             return web.json_response({"error": {"message": f"Copilot model '{model_id}' was not found."}}, status=404)
-        if not supports_responses(model):
+        if not is_available(model):
             return web.json_response(
-                {"error": {"message": f"Copilot model '{model_id}' does not support the Responses API."}},
+                {"error": {"message": f"Copilot model '{model_id}' is disabled or has no supported endpoint."}},
                 status=400,
             )
 
-        upstream = await gateway.open_response(body, request.headers.get("Accept", "text/event-stream"))
+        native = supports_responses(model)
+        if native:
+            upstream = await gateway.open_response(body, request.headers.get("Accept", "text/event-stream"))
+        else:
+            chat_body = responses_to_chat(body)
+            upstream = await gateway.open_chat_completion(
+                chat_body, "text/event-stream" if chat_body.get("stream") else "application/json"
+            )
+    except ConversionError as error:
+        return web.json_response({"error": {"message": str(error), "type": "invalid_request_error"}}, status=400)
     except (CredentialError, ClientError) as error:
         return web.json_response({"error": {"message": str(error)}}, status=502)
+
+    if not native and upstream.status < 400:
+        return await _adapt_chat_response(request, upstream, body)
 
     headers = {}
     for name in ("Content-Type", "Cache-Control", "X-Request-Id"):
@@ -168,10 +192,40 @@ async def create_response(request: web.Request) -> web.StreamResponse:
     return downstream
 
 
+async def _adapt_chat_response(request: web.Request, upstream: ClientResponse, body: dict[str, Any]) -> web.StreamResponse:
+    try:
+        if not body.get("stream", False):
+            try:
+                document = await upstream.json()
+                if not isinstance(document, dict):
+                    raise ConversionError("Upstream Chat Completions response must be an object.")
+                response = response_from_chat(document, body)
+            except (ConversionError, ClientError, ValueError, TypeError) as error:
+                return web.json_response({"error": {"message": str(error), "type": "upstream_error"}}, status=502)
+            headers = {"X-Request-Id": upstream.headers["X-Request-Id"]} if upstream.headers.get("X-Request-Id") else {}
+            return web.json_response(response, headers=headers)
+
+        if "text/event-stream" not in upstream.headers.get("Content-Type", ""):
+            return web.json_response(
+                {"error": {"message": "Upstream Chat Completions did not return an event stream."}}, status=502
+            )
+        headers = {"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
+        if upstream.headers.get("X-Request-Id"):
+            headers["X-Request-Id"] = upstream.headers["X-Request-Id"]
+        downstream = web.StreamResponse(headers=headers)
+        await downstream.prepare(request)
+        async for event in stream_from_chat(upstream.content, body):
+            await downstream.write(event)
+        await downstream.write_eof()
+        return downstream
+    finally:
+        upstream.release()
+
+
 def create_app(settings: Settings, gateway: CopilotGateway | None = None) -> web.Application:
     app = web.Application(
         middlewares=[authorization_middleware],
-        client_max_size=10 * 1024**2,
+        client_max_size=100 * 1024**2,
     )
     selected_gateway = gateway or CopilotGateway(settings)
     app[SETTINGS_KEY] = settings

@@ -2,16 +2,21 @@
 
 一个跨平台的本地网关，让同一局域网内其他机器上的 Codex CLI 使用服务端机器已有的 GitHub Copilot 登录。
 
-首版支持：
+支持：
 
 - OpenAI `GET /v1/models`
 - OpenAI `POST /v1/responses`
-- 普通响应和 SSE 流式响应透传
+- 原生 Responses 透传，以及 Gemini 等 Chat Completions 模型的协议转换
+- 普通响应和 SSE 流式输出，文字、图片输入以及函数和 custom 工具调用
 - OpenCode `github-copilot` OAuth 凭据
 - 局域网 Bearer API Key 鉴权
 - Windows、macOS 和 Linux
 
-当前只暴露 Copilot 原生支持 `/responses` 的模型。仅支持 `/v1/messages` 的 Claude 模型暂不暴露，后续需要增加 Anthropic Messages 协议适配层。
+客户端仍使用 `/v1/responses`。网关优先将请求透传给原生支持 `/responses` 的模型；对于只支持 `/chat/completions` 的模型（包括 Gemini），自动转换请求、普通响应和流式事件。`/v1/models` 会列出这两类可用模型，并排除上游策略已禁用的模型。仅支持 `/v1/messages` 的模型暂不暴露，需要另行增加 Anthropic Messages 协议适配层。
+
+Chat Completions 转换支持文字和图片消息、函数工具调用及其结果，以及 custom 工具（封装为带字符串 `input` 参数的函数）。调用时须在 `input` 中携带完整对话历史；不支持 `previous_response_id` 等依赖服务端保存历史的功能。此转换不覆盖所有 Responses 功能：`image_generation` 工具沿用现有行为被过滤。Codex 默认添加的托管网页搜索声明也会被过滤，同时明确告知模型该搜索功能不可用；强制选择搜索工具、其他托管工具和不支持的输入类型会返回错误。
+
+HTTP 请求体上限为 100 MiB（约 104.9 MB），可接收超过 aiohttp 默认 1 MiB 限制的请求。超过上限时返回 HTTP 413，不会向上游请求模型。
 
 ## Linux / WSL 部署
 
@@ -235,6 +240,25 @@ args = ["/d", "/c", "type", 'C:\Users\your-user\.config\copilot-lan-bridge\api-k
 $headers = @{ Authorization = "Bearer $env:COPILOT_BRIDGE_API_KEY" }
 Invoke-RestMethod -Headers $headers http://192.168.1.20:18787/v1/models
 ```
+
+### 同步 Codex 模型菜单
+
+Codex 模型菜单使用独立的 catalog 文件；`/v1/models` 返回新模型，不代表菜单会自动更新。在 Codex 客户端上，使用已安装本项目的 Python 环境，并确保 `codex` 命令在 `PATH` 中，运行：
+
+```bash
+python -m copilot_lan_bridge.codex_catalog \
+  --base-url http://192.168.1.20:18787/v1 \
+  --api-key-file ~/.config/copilot-lan-bridge/api-key \
+  --output ~/.codex/copilot-models.json
+```
+
+将 Bridge 地址和密钥文件路径替换为客户端实际使用的值。然后在 `~/.codex/config.toml` **顶层（所有 `[表名]` 之前）**添加目录文件的绝对路径：
+
+```toml
+model_catalog_json = "/home/your-user/.codex/copilot-models.json"
+```
+
+重启 Codex 后模型菜单才会加载新目录。远端 Bridge 更新后，各客户端也需要重新运行导出命令并重启 Codex；Windows 客户端请将示例路径替换为实际绝对路径。
 
 ## 通过 SSH 隧道访问
 

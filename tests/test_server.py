@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import unittest
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -8,6 +9,20 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from copilot_lan_bridge.config import Settings
 from copilot_lan_bridge.server import create_app
+
+
+def _json_payload(input_length: int) -> io.BytesIO:
+    payload = io.BytesIO()
+    payload.write(b'{"model":"gpt-test","input":"')
+    block = b"x" * (1024**2)
+    remaining = input_length
+    while remaining:
+        size = min(remaining, len(block))
+        payload.write(block[:size])
+        remaining -= size
+    payload.write(b'"}')
+    payload.seek(0)
+    return payload
 
 
 class FakeContent:
@@ -27,6 +42,11 @@ class FakeResponse:
 
 
 class FakeGateway:
+    def __init__(self) -> None:
+        self.model_requests = 0
+        self.response_requests = 0
+        self.last_input_length = 0
+
     async def start(self) -> None:
         pass
 
@@ -34,6 +54,7 @@ class FakeGateway:
         pass
 
     async def models(self) -> list[dict[str, Any]]:
+        self.model_requests += 1
         return [
             {
                 "id": "gpt-test",
@@ -43,6 +64,8 @@ class FakeGateway:
         ]
 
     async def open_response(self, body: dict[str, Any], accept: str) -> FakeResponse:
+        self.response_requests += 1
+        self.last_input_length = len(body.get("input", ""))
         return FakeResponse()
 
 
@@ -55,7 +78,8 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             api_key=self.api_key,
             auth_file=Path("unused-in-fake-gateway.json"),
         )
-        self.app = create_app(settings, gateway=FakeGateway())
+        self.gateway = FakeGateway()
+        self.app = create_app(settings, gateway=self.gateway)
         self.client = TestClient(TestServer(self.app))
         await self.client.start_server()
 
@@ -93,14 +117,30 @@ class ServerTests(unittest.IsolatedAsyncioTestCase):
             b'event: response.output_text.delta\ndata: {"delta":"hello"}\n\n',
         )
 
-    async def test_responses_accept_payload_larger_than_aiohttp_default(self) -> None:
+    async def test_responses_accept_twelve_mib_payload_above_previous_limit(self) -> None:
+        input_length = 12 * 1024**2
         response = await self.client.post(
             "/v1/responses",
-            headers=self.authorization(),
-            json={"model": "gpt-test", "input": "x" * (1024**2 + 1)},
+            headers={**self.authorization(), "Content-Type": "application/json"},
+            data=_json_payload(input_length),
         )
 
         self.assertEqual(response.status, 200)
+        await response.read()
+        self.assertEqual(self.gateway.response_requests, 1)
+        self.assertEqual(self.gateway.last_input_length, input_length)
+
+    async def test_responses_reject_payload_above_one_hundred_mib_before_calling_upstream(self) -> None:
+        response = await self.client.post(
+            "/v1/responses",
+            headers={**self.authorization(), "Content-Type": "application/json"},
+            data=_json_payload(100 * 1024**2 + 1),
+        )
+
+        self.assertEqual(response.status, 413)
+        await response.read()
+        self.assertEqual(self.gateway.model_requests, 0)
+        self.assertEqual(self.gateway.response_requests, 0)
 
 
 if __name__ == "__main__":

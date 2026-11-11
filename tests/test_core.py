@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from copilot_lan_bridge.config import ConfigError, Settings, is_loopback_host
 from copilot_lan_bridge.credentials import CredentialError, load_copilot_credential
-from copilot_lan_bridge.models import supports_responses, visible_models
+from copilot_lan_bridge.models import is_available, supports_chat_completions, supports_responses, visible_models
 from copilot_lan_bridge.security import is_authorized
 
 
@@ -62,14 +62,43 @@ class CredentialTests(unittest.TestCase):
 
 
 class ModelTests(unittest.TestCase):
-    def test_filters_models_without_native_responses(self) -> None:
+    def test_lists_native_and_chat_models_but_excludes_unavailable_models(self) -> None:
         models = [
             {"id": "gpt", "name": "GPT", "supported_endpoints": ["/responses"]},
+            {"id": "gemini", "name": "Gemini", "supported_endpoints": ["/chat/completions"], "policy": {"state": "enabled"}},
             {"id": "claude", "supported_endpoints": ["/v1/messages"]},
             {"id": "disabled", "supported_endpoints": ["/responses"], "policy": {"state": "disabled"}},
+            {"id": "disabled-chat", "supported_endpoints": ["/chat/completions"], "policy": {"state": "disabled"}},
+            {"id": "unknown", "supported_endpoints": ["/unknown"]},
+            {"id": "", "supported_endpoints": ["/responses"]},
+            {"id": " ", "supported_endpoints": ["/chat/completions"]},
+            {"supported_endpoints": ["/chat/completions"]},
         ]
         self.assertTrue(supports_responses(models[0]))
-        self.assertEqual([model["id"] for model in visible_models(models)], ["gpt"])
+        self.assertTrue(supports_chat_completions(models[1]))
+        visible = visible_models(models)
+        self.assertEqual([model["id"] for model in visible], ["gpt", "gemini"])
+        self.assertEqual(visible[1]["supported_endpoints"], ["/chat/completions"])
+        self.assertEqual(visible[1]["display_name"], "Gemini")
+        self.assertNotIn("slug", models[1])
+        self.assertTrue(all(is_available(model) for model in models[:2]))
+        self.assertTrue(all(not is_available(model) for model in models[2:]))
+
+    def test_normalizes_endpoint_prefix_case_and_whitespace(self) -> None:
+        for endpoint in ("/responses", " /V1/Responses ", "responses"):
+            with self.subTest(endpoint=endpoint):
+                self.assertTrue(supports_responses({"supported_endpoints": [endpoint]}))
+        for endpoint in ("/chat/completions", " /V1/Chat/Completions ", "chat/completions"):
+            with self.subTest(endpoint=endpoint):
+                self.assertTrue(supports_chat_completions({"supported_endpoints": [endpoint]}))
+
+    def test_ignores_invalid_endpoint_metadata(self) -> None:
+        for endpoints in (None, "/responses", [None, 42, " ", "/messages"]):
+            with self.subTest(endpoints=endpoints):
+                model = {"id": "invalid", "supported_endpoints": endpoints}
+                self.assertFalse(supports_responses(model))
+                self.assertFalse(supports_chat_completions(model))
+                self.assertFalse(is_available(model))
 
 
 if __name__ == "__main__":
