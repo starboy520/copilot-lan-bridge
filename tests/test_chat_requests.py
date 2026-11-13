@@ -122,6 +122,26 @@ class ChatRequestTests(unittest.TestCase):
         self.assertEqual(without_search["messages"], [{"role": "user", "content": "Hi"}])
         self.assertNotIn("tools", without_search)
 
+    def test_toolless_auto_or_none_tool_choice_is_omitted_for_chat(self) -> None:
+        for tools_field in ({}, {"tools": []}, {"tools": [{"type": "web_search"}]}):
+            for choice in ("auto", "none"):
+                with self.subTest(tools_field=tools_field, choice=choice):
+                    converted = responses_to_chat({
+                        "model": "gemini-test",
+                        "input": "Summarize this thread.",
+                        "tool_choice": choice,
+                        **tools_field,
+                    })
+                    self.assertNotIn("tools", converted)
+                    self.assertNotIn("tool_choice", converted)
+        with_tools = responses_to_chat({
+            "model": "gemini-test",
+            "input": "Hi",
+            "tools": [{"type": "function", "name": "shell", "parameters": {"type": "object"}}],
+            "tool_choice": "none",
+        })
+        self.assertEqual(with_tools["tool_choice"], "none")
+
     def test_text_verbosity_adds_preference_without_overwriting_instructions(self) -> None:
         preferences = {
             "low": "Keep responses concise.",
@@ -234,6 +254,7 @@ class ChatRequestTests(unittest.TestCase):
             ({"input": [{"role": "user", "content": "Hi", "unknown": "content"}]}, "unknown"),
             ({"unknown_request_field": "content"}, "unknown_request_field"),
             ({"tool_choice": {"type": "function", "name": "missing"}}, "undeclared"),
+            ({"tools": [], "tool_choice": "required"}, "required"),
             ({"text": {"verbosity": "invalid"}}, "verbosity"),
             ({"text": {"verbosity": []}}, "verbosity"),
             ({"background": True}, "background"),

@@ -262,6 +262,10 @@ def _messages(body: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _tool_choice(value: Any, names: dict[str, dict[str, Any]]) -> Any:
     if isinstance(value, str) and value in {"auto", "none", "required"}:
+        if not names:
+            if value == "required":
+                raise ConversionError("tool_choice 'required' requires at least one supported tool.")
+            return None
         return value
     if not isinstance(value, dict):
         raise ConversionError("tool_choice must be 'auto', 'none', 'required', or a named function/custom tool.")
@@ -335,7 +339,9 @@ def responses_to_chat(body: dict[str, Any]) -> dict[str, Any]:
     if tools:
         converted["tools"] = tools
     if body.get("tool_choice") is not None:
-        converted["tool_choice"] = _tool_choice(body["tool_choice"], tool_name_map(body))
+        choice = _tool_choice(body["tool_choice"], tool_name_map(body))
+        if choice is not None:
+            converted["tool_choice"] = choice
     for key in ("stream", "parallel_tool_calls"):
         if key in body:
             if not isinstance(body[key], bool):
